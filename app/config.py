@@ -111,7 +111,7 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         raise ConfigError("music_root must point to a directory")
 
     incoming_subdir = _get_env("INCOMING_SUBDIR", file_values.get("incoming_subdir", "Incoming"))
-    temp_subdir = _get_env("TEMP_SUBDIR", file_values.get("temp_subdir", ".temp"))
+    temp_subdir = _get_env("TEMP_SUBDIR", file_values.get("temp_subdir", ".roon_uploader_tmp"))
     allowlist = _coerce_allowlist(_get_env("ALLOWLIST", file_values.get("allowlist")))
     cleanup_days = _coerce_cleanup_days(_get_env("CLEANUP_DAYS", file_values.get("cleanup_days")))
     mount_validation_mode = _get_env("MOUNT_VALIDATION_MODE", file_values.get("mount_validation_mode", "strict"))
@@ -169,7 +169,7 @@ def load_config_from_mapping(values: Dict[str, Any]) -> AppConfig:
     return AppConfig(
         music_root=music_root,
         incoming_subdir=str(values.get("incoming_subdir", "Incoming")),
-        temp_subdir=str(values.get("temp_subdir", ".temp")),
+        temp_subdir=str(values.get("temp_subdir", ".roon_uploader_tmp")),
         max_task_size_bytes=_coerce_positive_int(
             values.get("max_task_size_bytes"),
             "max_task_size_bytes",

@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly cleanup for Roon Helper uploads
+
+[Timer]
+OnCalendar=Sun 03:30
+Persistent=true
+Unit=roon-uploader-cleanup.service
+
+[Install]
+WantedBy=timers.target
