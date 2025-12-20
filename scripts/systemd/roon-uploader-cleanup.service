@@ -7,7 +7,7 @@ Type=simple
 Environment=ROONHELPER_USER=roon
 Environment=ROONHELPER_GROUP=roon
 Environment=ROONHELPER_ROOT=/opt/roonhelper
-Environment=CONFIG_FILE=/etc/roonhelper/config.yaml
+Environment=PYTHONPATH=%E{ROONHELPER_ROOT}
 EnvironmentFile=/etc/roonhelper.env
 WorkingDirectory=%E{ROONHELPER_ROOT}
 User=%E{ROONHELPER_USER}
