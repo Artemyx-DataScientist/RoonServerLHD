@@ -13,6 +13,8 @@ class TaskStatus(str, Enum):
     UPLOADING = "UPLOADING"
     READY_FOR_PROCESSING = "READY_FOR_PROCESSING"
     PROCESSING = "PROCESSING"
+    NEED_PASSWORD = "NEED_PASSWORD"
+    NEED_TAGS = "NEED_TAGS"
     DONE = "DONE"
     DONE_WITH_DUPLICATES = "DONE_WITH_DUPLICATES"
     ERROR = "ERROR"
@@ -26,6 +28,8 @@ _ALLOWED_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
     TaskStatus.UPLOADING: [TaskStatus.READY_FOR_PROCESSING, TaskStatus.CANCELLED],
     TaskStatus.READY_FOR_PROCESSING: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
     TaskStatus.PROCESSING: [
+        TaskStatus.NEED_PASSWORD,
+        TaskStatus.NEED_TAGS,
         TaskStatus.DONE,
         TaskStatus.DONE_WITH_DUPLICATES,
         TaskStatus.ERROR,
@@ -33,6 +37,8 @@ _ALLOWED_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
     ],
+    TaskStatus.NEED_PASSWORD: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
+    TaskStatus.NEED_TAGS: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
     TaskStatus.DONE: [],
     TaskStatus.DONE_WITH_DUPLICATES: [],
     TaskStatus.ERROR: [],
@@ -58,6 +64,7 @@ class TaskRecord:
     created_at: datetime
     updated_at: datetime
     cleanup_after: Optional[datetime]
+    context: Dict[str, object]
 
 
 @dataclass
@@ -116,6 +123,29 @@ class TaskFileCreateResponse(BaseModel):
 class ChunkUploadResponse(BaseModel):
     next_offset: int
     complete: bool
+
+
+class TaskPasswordRequest(BaseModel):
+    password: str
+
+
+class TrackTag(BaseModel):
+    path: str
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    title: Optional[str] = None
+    year: Optional[str] = None
+
+
+class TaskTagsResponse(BaseModel):
+    tracks: List[TrackTag]
+
+
+class TaskTagsUpdateRequest(BaseModel):
+    tracks: List[TrackTag]
+    batch_artist: Optional[str] = None
+    batch_album: Optional[str] = None
+    batch_year: Optional[str] = None
 
 
 class SettingsResponse(BaseModel):
