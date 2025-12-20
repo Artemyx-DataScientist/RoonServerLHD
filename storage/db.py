@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from app.models import (
     TaskEventRecord,
@@ -168,6 +168,20 @@ class Database:
             rows = cursor.fetchall()
             return [self._row_to_task(row) for row in rows]
 
+    def list_tasks_by_status(self, statuses: Iterable[TaskStatus]) -> List[TaskRecord]:
+        status_values = [status.value for status in statuses]
+        if not status_values:
+            return []
+        placeholders = ",".join(["?"] * len(status_values))
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY created_at ASC",
+                status_values,
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_task(row) for row in rows]
+
     def add_event(self, task_id: int, event: str, at: Optional[datetime] = None) -> TaskEventRecord:
         timestamp = at or datetime.now(timezone.utc)
         with self._connect() as conn:
@@ -225,6 +239,13 @@ class Database:
                 (file_hash, task_id, now.isoformat()),
             )
             conn.commit()
+
+    def hash_exists(self, file_hash: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM known_hashes WHERE file_hash = ?", (file_hash,))
+            row = cursor.fetchone()
+            return row is not None
 
     def create_task_file(
         self,
