@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Roon Helper Tasks</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2rem; }
+        form { margin-bottom: 1.5rem; }
+        table { border-collapse: collapse; width: 100%; max-width: 800px; }
+        th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
+        th { background: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Task Manager (stub)</h1>
+    <form id="create-task">
+        <label for="name">Task name:</label>
+        <input id="name" name="name" required>
+        <button type="submit">Create</button>
+    </form>
+
+    <section>
+        <h2>Existing tasks</h2>
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Status</th><th>Created</th></tr>
+            </thead>
+            <tbody id="tasks-body">
+                {% for task in tasks %}
+                <tr>
+                    <td>{{ task.id }}</td>
+                    <td>{{ task.name }}</td>
+                    <td>{{ task.status }}</td>
+                    <td>{{ task.created_at }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <script>
+        document.getElementById('create-task').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const nameInput = document.getElementById('name');
+            const payload = { name: nameInput.value };
+            const response = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                window.location.reload();
+            } else {
+                alert('Failed to create task');
+            }
+        });
+    </script>
+</body>
+</html>
