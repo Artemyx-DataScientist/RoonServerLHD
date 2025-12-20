@@ -13,6 +13,9 @@ class TaskStatus(str, Enum):
     UPLOADING = "UPLOADING"
     READY_FOR_PROCESSING = "READY_FOR_PROCESSING"
     PROCESSING = "PROCESSING"
+    DONE = "DONE"
+    DONE_WITH_DUPLICATES = "DONE_WITH_DUPLICATES"
+    ERROR = "ERROR"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -22,7 +25,17 @@ _ALLOWED_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
     TaskStatus.CREATED: [TaskStatus.UPLOADING, TaskStatus.CANCELLED],
     TaskStatus.UPLOADING: [TaskStatus.READY_FOR_PROCESSING, TaskStatus.CANCELLED],
     TaskStatus.READY_FOR_PROCESSING: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
-    TaskStatus.PROCESSING: [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED],
+    TaskStatus.PROCESSING: [
+        TaskStatus.DONE,
+        TaskStatus.DONE_WITH_DUPLICATES,
+        TaskStatus.ERROR,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    ],
+    TaskStatus.DONE: [],
+    TaskStatus.DONE_WITH_DUPLICATES: [],
+    TaskStatus.ERROR: [],
     TaskStatus.COMPLETED: [],
     TaskStatus.FAILED: [],
     TaskStatus.CANCELLED: [],
