@@ -130,6 +130,7 @@ class Database:
             task_id=row["task_id"],
             relative_path=row["relative_path"],
             original_name=row["original_name"] or row["relative_path"],
+            file_hash=row["file_hash"] if "file_hash" in row.keys() else None,
             expected_size=row["expected_size"] or 0,
             uploaded_bytes=row["uploaded_bytes"] or 0,
             finalized=bool(row["finalized"]),
@@ -137,6 +138,17 @@ class Database:
             updated_at=datetime.fromisoformat(updated_at_value).replace(tzinfo=timezone.utc),
             size_bytes=row["size_bytes"],
         )
+
+    def update_task_file_hash(self, file_id: int, file_hash: str) -> Optional[TaskFileRecord]:
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE task_files SET file_hash = ?, updated_at = ? WHERE id = ?",
+                (file_hash, now.isoformat(), file_id),
+            )
+            conn.commit()
+        return self.get_task_file(file_id)
 
     def create_task(self, name: str, cleanup_days: int) -> TaskRecord:
         now = datetime.now(timezone.utc)
