@@ -81,6 +81,7 @@ class TaskFileRecord:
     task_id: int
     relative_path: str
     original_name: Optional[str]
+    file_hash: Optional[str]
     expected_size: int
     uploaded_bytes: int
     finalized: bool

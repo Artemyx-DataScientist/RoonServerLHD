@@ -3,40 +3,32 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
-import stat
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
-import py7zr
-import rarfile
-from mutagen import File as MutagenFile
 from app.config import AppConfig, load_config
-from app.models import TaskRecord, TaskStatus
+from app.models import TaskFileRecord, TaskRecord, TaskStatus
 from storage.db import Database
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
 logger = logging.getLogger("worker")
 
-ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
-MAX_ARCHIVE_FILES = 5000
-MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 HASH_BUFFER_SIZE = 1024 * 1024
-
-
-class NeedPasswordError(Exception):
-    """Raised when archive processing requires a password."""
+ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 
 
 @dataclass
-class FileReport:
+class FileOutcome:
+    record: TaskFileRecord
     source_path: Path
     relative_output: Path
     status: str
     reason: Optional[str] = None
     file_hash: Optional[str] = None
+    destination: Optional[Path] = None
 
 
 def _resolve_config() -> AppConfig:
@@ -84,154 +76,8 @@ def _task_temp_dir(config: AppConfig, task_id: int) -> Path:
 def _allowlist_matches(path: Path, allowlist: Sequence[str]) -> bool:
     if not allowlist:
         return True
-    normalized_allowlist = {item.lower() for item in allowlist}
+    normalized_allowlist = {item.lower().lstrip(".") for item in allowlist}
     return path.suffix.lower().lstrip(".") in normalized_allowlist
-
-
-def _safe_join(base: Path, member: Path) -> Path:
-    target = base / member
-    try:
-        resolved = target.resolve()
-    except FileNotFoundError:
-        resolved = target.parent.resolve() / target.name
-    try:
-        resolved.relative_to(base.resolve())
-    except ValueError as exc:
-        raise ValueError(f"Refusing to write outside extraction root: {member}") from exc
-    return resolved
-
-
-def _handle_zip_archive(
-    archive_path: Path,
-    output_root: Path,
-    allowlist: Sequence[str],
-    password: Optional[str],
-) -> Iterator[FileReport]:
-    import zipfile
-
-    with zipfile.ZipFile(archive_path, "r") as archive:
-        members = archive.infolist()
-        if len(members) > MAX_ARCHIVE_FILES:
-            raise RuntimeError("Archive contains too many files")
-        total_size = sum(info.file_size for info in members)
-        if total_size > MAX_EXTRACTED_BYTES:
-            raise RuntimeError("Archive exceeds extraction size limit")
-        for info in members:
-            requires_password = bool(info.flag_bits & 0x1)
-            if requires_password and not password:
-                raise NeedPasswordError("Password required for zip archive")
-            member_path = Path(info.filename)
-            if member_path.is_absolute() or any(part == ".." for part in member_path.parts):
-                logger.warning("Skipping unsafe path in archive: %s", member_path)
-                continue
-            is_symlink = stat.S_IFMT(info.external_attr >> 16) == stat.S_IFLNK
-            if info.is_dir() or is_symlink:
-                continue
-            if not _allowlist_matches(member_path, allowlist):
-                yield FileReport(source_path=archive_path, relative_output=member_path, status="SKIPPED", reason="not_allowlisted")
-                continue
-            target_path = _safe_join(output_root, member_path)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with archive.open(info, "r", pwd=password.encode() if password else None) as src, target_path.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
-            except RuntimeError as exc:
-                if "password" in str(exc).lower():
-                    raise NeedPasswordError("Invalid or missing password for zip archive") from exc
-                raise
-            yield FileReport(source_path=target_path, relative_output=member_path, status="EXTRACTED")
-
-
-def _handle_7z_archive(
-    archive_path: Path,
-    output_root: Path,
-    allowlist: Sequence[str],
-    password: Optional[str],
-) -> Iterator[FileReport]:
-    with py7zr.SevenZipFile(archive_path, mode="r", password=password) as archive:
-        file_info = archive.list()
-        regular_files = [item for item in file_info if not item.is_directory]
-        if len(regular_files) > MAX_ARCHIVE_FILES:
-            raise RuntimeError("Archive contains too many files")
-        total_size = sum(item.uncompressed for item in regular_files if item.uncompressed)
-        if total_size > MAX_EXTRACTED_BYTES:
-            raise RuntimeError("Archive exceeds extraction size limit")
-        try:
-            extracted = archive.readall()
-        except (py7zr.exceptions.PasswordRequired, py7zr.exceptions.WrongPassword) as exc:
-            raise NeedPasswordError("Password required for 7z archive") from exc
-        for name, bytes_io in extracted.items():
-            member_path = Path(name)
-            if member_path.is_absolute() or any(part == ".." for part in member_path.parts):
-                logger.warning("Skipping unsafe path in archive: %s", member_path)
-                continue
-            if not _allowlist_matches(member_path, allowlist):
-                yield FileReport(source_path=archive_path, relative_output=member_path, status="SKIPPED", reason="not_allowlisted")
-                continue
-            target_path = _safe_join(output_root, member_path)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with target_path.open("wb") as dst:
-                shutil.copyfileobj(bytes_io, dst)
-            yield FileReport(source_path=target_path, relative_output=member_path, status="EXTRACTED")
-
-
-def _handle_rar_archive(
-    archive_path: Path,
-    output_root: Path,
-    allowlist: Sequence[str],
-    password: Optional[str],
-) -> Iterator[FileReport]:
-    try:
-        with rarfile.RarFile(archive_path, pwd=password) as archive:
-            members = [item for item in archive.infolist() if item.is_file()]
-            if len(members) > MAX_ARCHIVE_FILES:
-                raise RuntimeError("Archive contains too many files")
-            total_size = sum(item.file_size for item in members)
-            if total_size > MAX_EXTRACTED_BYTES:
-                raise RuntimeError("Archive exceeds extraction size limit")
-            for member in members:
-                if member.needs_password() and not password:
-                    raise NeedPasswordError("Password required for rar archive")
-                member_path = Path(member.filename)
-                if member_path.is_absolute() or any(part == ".." for part in member_path.parts):
-                    logger.warning("Skipping unsafe path in archive: %s", member_path)
-                    continue
-                if member.is_symlink():
-                    continue
-                if not _allowlist_matches(member_path, allowlist):
-                    yield FileReport(source_path=archive_path, relative_output=member_path, status="SKIPPED", reason="not_allowlisted")
-                    continue
-                target_path = _safe_join(output_root, member_path)
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with archive.open(member) as src, target_path.open("wb") as dst:
-                        shutil.copyfileobj(src, dst)
-                except rarfile.BadRarFile as exc:
-                    if "password" in str(exc).lower():
-                        raise NeedPasswordError("Invalid password for rar archive") from exc
-                    raise
-                yield FileReport(source_path=target_path, relative_output=member_path, status="EXTRACTED")
-    except rarfile.NeedFirstVolume:
-        raise RuntimeError("multi_volume_not_supported")
-    except rarfile.RarCannotExec as exc:
-        raise RuntimeError(f"rar_support_missing:{exc}")
-
-
-def _process_archive(
-    archive_path: Path,
-    extract_root: Path,
-    allowlist: Sequence[str],
-    password: Optional[str],
-) -> List[FileReport]:
-    extract_root.mkdir(parents=True, exist_ok=True)
-    suffix = archive_path.suffix.lower()
-    if suffix == ".zip":
-        return list(_handle_zip_archive(archive_path, extract_root, allowlist, password))
-    if suffix == ".7z":
-        return list(_handle_7z_archive(archive_path, extract_root, allowlist, password))
-    if suffix == ".rar":
-        return list(_handle_rar_archive(archive_path, extract_root, allowlist, password))
-    raise RuntimeError(f"Unsupported archive type: {suffix}")
 
 
 def _sha256sum(path: Path) -> str:
@@ -245,12 +91,6 @@ def _sha256sum(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _gather_task_files(temp_dir: Path) -> Iterator[Path]:
-    for file_path in temp_dir.rglob("*"):
-        if file_path.is_file():
-            yield file_path
-
-
 def _plan_destination(task: TaskRecord, incoming_root: Path) -> Path:
     date_part = datetime.utcnow().strftime("%Y-%m-%d")
     safe_label = "".join(ch for ch in task.name if ch.isalnum() or ch in {"-", "_", " "}).strip()
@@ -259,163 +99,142 @@ def _plan_destination(task: TaskRecord, incoming_root: Path) -> Path:
     return incoming_root / date_part / label
 
 
-def _read_tag_fields(file_path: Path) -> Dict[str, Optional[str]]:
-    audio = MutagenFile(file_path, easy=True)
-    if not audio or not audio.tags:
-        return {"artist": None, "album": None, "title": None, "year": None}
-
-    def _first_value(key: str) -> Optional[str]:
-        values = audio.tags.get(key)
-        if not values:
-            return None
-        return str(values[0]).strip() if str(values[0]).strip() else None
-
-    year_value = _first_value("date") or _first_value("year")
-    return {
-        "artist": _first_value("artist"),
-        "album": _first_value("album"),
-        "title": _first_value("title"),
-        "year": year_value,
-    }
-
-
-def _tags_incomplete(tag_values: Dict[str, Optional[str]]) -> bool:
-    return not tag_values.get("artist") or not tag_values.get("album") or not tag_values.get("title")
-
-
-def _process_task(
-    db: Database,
-    config: AppConfig,
-    task: TaskRecord,
-    incoming_root: Path,
-) -> None:
+def _load_candidate_files(
+    db: Database, config: AppConfig, task: TaskRecord, allowlist: Sequence[str]
+) -> List[FileOutcome]:
     temp_dir = _task_temp_dir(config, task.id)
     if not temp_dir.exists():
         raise RuntimeError(f"Task temp directory missing: {temp_dir}")
 
-    allowlist = config.allowlist
-    extraction_root = temp_dir / "extract"
-    file_reports: List[FileReport] = []
-    password = str(task.context.get("password")) if task.context.get("password") else None
+    records = db.list_task_files(task.id)
+    if not records:
+        raise RuntimeError("No files registered for task")
 
-    for file_path in _gather_task_files(temp_dir):
-        if extraction_root in file_path.parents:
-            continue
-        relative_to_task = file_path.relative_to(temp_dir)
-        if file_path.suffix.lower() in ARCHIVE_EXTENSIONS:
-            logger.info("Extracting archive %s", file_path)
-            archive_base = extraction_root / relative_to_task.with_suffix("")
-            try:
-                extracted_reports = _process_archive(file_path, archive_base, allowlist, password)
-                file_reports.extend(extracted_reports)
-            except NeedPasswordError:
-                db.update_task_context(task.id, {"password_required": True, "password": None})
-                db.update_status(task.id, TaskStatus.NEED_PASSWORD)
-                db.add_event(task.id, "need_password")
-                return
-            continue
-        if not _allowlist_matches(file_path, allowlist):
-            file_reports.append(
-                FileReport(
-                    source_path=file_path,
-                    relative_output=relative_to_task,
+    unfinalized = [record for record in records if not record.finalized]
+    if unfinalized:
+        pending = ", ".join(record.relative_path for record in unfinalized)
+        raise RuntimeError(f"Not all files finalized: {pending}")
+
+    outcomes: List[FileOutcome] = []
+    for record in records:
+        source_path = temp_dir / record.relative_path
+        relative_output = Path(record.relative_path)
+        if not source_path.exists() or not source_path.is_file():
+            raise RuntimeError(f"Missing file on disk: {relative_output}")
+
+        if source_path.suffix.lower() in ARCHIVE_EXTENSIONS:
+            outcomes.append(
+                FileOutcome(
+                    record=record,
+                    source_path=source_path,
+                    relative_output=relative_output,
                     status="SKIPPED",
-                    reason="not_allowlisted",
+                    reason="archives not supported in worker v1",
                 )
             )
             continue
-        file_reports.append(
-            FileReport(
-                source_path=file_path,
-                relative_output=relative_to_task,
+
+        if not _allowlist_matches(source_path, allowlist):
+            outcomes.append(
+                FileOutcome(
+                    record=record,
+                    source_path=source_path,
+                    relative_output=relative_output,
+                    status="SKIPPED",
+                    reason="extension not allowlisted",
+                )
+            )
+            continue
+
+        outcomes.append(
+            FileOutcome(
+                record=record,
+                source_path=source_path,
+                relative_output=relative_output,
                 status="READY",
             )
         )
 
-    duplicates_found = False
+    return outcomes
+
+
+def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
+    incoming_root, _ = _validate_mounts(config)
+    db.add_event(task.id, "mount_validated")
+    allowlist = config.allowlist
+    outcomes = _load_candidate_files(db, config, task, allowlist)
+
+    duplicates_or_skips = False
     destination_root = _plan_destination(task, incoming_root)
-    prepared: List[FileReport] = []
-    candidate_hashes: Dict[Path, str] = {}
-    for report in file_reports:
-        if report.status not in {"READY", "EXTRACTED"}:
-            db.add_event(task.id, f"file_skipped:{report.relative_output}:{report.reason}")
+    file_statuses: Dict[str, Dict[str, str]] = {}
+
+    for outcome in outcomes:
+        relative_key = str(outcome.relative_output)
+        if outcome.status == "SKIPPED":
+            duplicates_or_skips = True
+            file_statuses[relative_key] = {"status": outcome.status, "reason": outcome.reason or ""}
+            db.add_event(task.id, f"file_skipped:{outcome.relative_output}:{outcome.reason}")
             continue
-        file_hash = _sha256sum(report.source_path)
-        candidate_hashes[report.source_path] = file_hash
-        report.file_hash = file_hash
+
+        db.add_event(task.id, f"hashing:{outcome.relative_output}")
+        file_hash = _sha256sum(outcome.source_path)
+        outcome.file_hash = file_hash
+        db.update_task_file_hash(outcome.record.id, file_hash)
+
         if db.hash_exists(file_hash):
-            duplicates_found = True
+            duplicates_or_skips = True
+            outcome.status = "DUPLICATE"
+            file_statuses[relative_key] = {"status": outcome.status, "hash": file_hash}
+            db.add_event(task.id, f"duplicate_detected:{outcome.relative_output}")
             continue
-        prepared.append(report)
 
-    pending_tags: List[Dict[str, str]] = []
-    for report in prepared:
-        tag_details = _read_tag_fields(report.source_path)
-        if _tags_incomplete(tag_details):
-            pending_tags.append(
-                {
-                    "source": str(report.source_path.relative_to(temp_dir)),
-                    "relative_output": str(report.relative_output),
-                }
-            )
-
-    if pending_tags:
-        db.clear_task_context_keys(task.id, {"password", "password_required"})
-        db.update_task_context(task.id, {"pending_tags": pending_tags})
-        db.update_status(task.id, TaskStatus.NEED_TAGS)
-        db.add_event(task.id, "need_tags")
-        return
-
-    db.clear_task_context_keys(task.id, {"pending_tags", "password", "password_required"})
-
-    for report in file_reports:
-        if report.status not in {"READY", "EXTRACTED"}:
-            continue
-        file_hash = candidate_hashes.get(report.source_path)
-        if not file_hash:
-            continue
-        if db.hash_exists(file_hash):
-            duplicates_found = True
-            db.add_event(task.id, f"duplicate:{report.relative_output}")
-            continue
         db.add_known_hash(file_hash, task_id=task.id)
-        target_path = destination_root / report.relative_output
+        target_path = destination_root / outcome.relative_output
         target_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            report.source_path.replace(target_path)
+            outcome.source_path.replace(target_path)
         except OSError:
-            shutil.copy2(report.source_path, target_path)
-            report.source_path.unlink()
-        db.add_event(task.id, f"stored:{report.relative_output}")
+            shutil.copy2(outcome.source_path, target_path)
+            outcome.source_path.unlink()
 
-    final_status = TaskStatus.DONE_WITH_DUPLICATES if duplicates_found else TaskStatus.DONE
+        outcome.status = "MOVED"
+        outcome.destination = target_path
+        file_statuses[relative_key] = {"status": outcome.status, "hash": file_hash}
+        db.add_event(task.id, f"moved_to_incoming:{outcome.relative_output}")
+
+    db.update_task_context(task.id, {"file_statuses": file_statuses})
+
+    final_status = TaskStatus.DONE_WITH_DUPLICATES if duplicates_or_skips else TaskStatus.DONE
     db.update_status(task.id, final_status)
-    db.add_event(task.id, f"completed:{len(prepared)}")
+    db.add_event(task.id, f"task_completed:{final_status.value}")
 
 
 def main() -> None:
     config = _resolve_config()
     db = Database(config.db_path)
     db.initialize()
-    incoming_root, _ = _validate_mounts(config)
     logger.info(
-        "Worker started with music_root=%s incoming_root=%s temp_subdir=%s",
+        "Worker started with music_root=%s incoming_subdir=%s temp_subdir=%s",
         config.music_root,
-        incoming_root,
+        config.incoming_subdir,
         config.temp_subdir,
     )
     try:
         while True:
             pending = db.list_tasks_by_status({TaskStatus.PROCESSING, TaskStatus.READY_FOR_PROCESSING})
             for task in pending:
+                if task.status not in {TaskStatus.PROCESSING, TaskStatus.READY_FOR_PROCESSING}:
+                    continue
                 try:
+                    db.add_event(task.id, "worker_started")
                     if task.status == TaskStatus.READY_FOR_PROCESSING:
                         db.update_status(task.id, TaskStatus.PROCESSING)
                         db.add_event(task.id, "queued")
-                    _process_task(db, config, task, incoming_root)
+                    _process_task(db, config, task)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Failed to process task %s", task.id)
-                    db.add_event(task.id, f"error:{exc}")
+                    db.update_task_context(task.id, {"error_message": str(exc)})
+                    db.add_event(task.id, f"task_failed:{exc}")
                     db.update_status(task.id, TaskStatus.ERROR)
             time.sleep(5)
     except KeyboardInterrupt:
