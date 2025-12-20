@@ -1,0 +1,13 @@
+[Unit]
+Description=Roon Helper API Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/RoonServerLHD
+ExecStart=/usr/bin/env uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+EnvironmentFile=-/etc/roonhelper.env
+
+[Install]
+WantedBy=multi-user.target

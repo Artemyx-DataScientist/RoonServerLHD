@@ -1,0 +1,10 @@
+# Example configuration for RoonServerLHD
+music_root: /mnt/music
+incoming_subdir: Incoming
+temp_subdir: .roon_uploader_tmp
+allowlist:
+  - flac
+  - mp3
+cleanup_days: 30
+mount_validation_mode: strict
+# db_path: storage/app.db
