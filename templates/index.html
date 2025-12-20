@@ -12,11 +12,13 @@
     </style>
 </head>
 <body>
-    <h1>Task Manager (stub)</h1>
+    <h1>Resumable Upload Demo</h1>
     <form id="create-task">
         <label for="name">Task name:</label>
         <input id="name" name="name" required>
-        <button type="submit">Create</button>
+        <label for="file-input">Files:</label>
+        <input id="file-input" type="file" webkitdirectory directory multiple required>
+        <button type="submit">Create & Upload</button>
     </form>
 
     <section>
@@ -38,21 +40,98 @@
         </table>
     </section>
 
+    <section>
+        <h2>Uploads</h2>
+        <div id="uploads"></div>
+    </section>
+
     <script>
+        const uploadsContainer = document.getElementById('uploads');
+
+        function createProgressEntry(file) {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `<strong>${file.name}</strong> <span class="progress">0%</span>`;
+            return wrapper;
+        }
+
+        async function uploadFile(taskId, file, progressEl) {
+            const relativePath = file.webkitRelativePath || file.name;
+            const registerResponse = await fetch(`/api/tasks/${taskId}/files`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    relative_path: relativePath,
+                    size_bytes: file.size,
+                    original_name: file.name
+                })
+            });
+
+            if (!registerResponse.ok) {
+                throw new Error(`Register failed: ${await registerResponse.text()}`);
+            }
+            const { file_id: fileId, max_chunk_bytes: maxChunk } = await registerResponse.json();
+            let offset = 0;
+            while (offset < file.size) {
+                const chunk = file.slice(offset, offset + maxChunk);
+                const chunkResponse = await fetch(`/api/tasks/${taskId}/files/${fileId}/chunks`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Range': `bytes ${offset}-${offset + chunk.size - 1}/${file.size}`
+                    },
+                    body: chunk
+                });
+
+                if (!chunkResponse.ok) {
+                    throw new Error(`Chunk failed: ${await chunkResponse.text()}`);
+                }
+                const chunkResult = await chunkResponse.json();
+                offset = chunkResult.next_offset;
+                const percent = Math.floor((offset / file.size) * 100);
+                progressEl.querySelector('.progress').textContent = `${percent}%`;
+            }
+
+            const finalizeResponse = await fetch(`/api/tasks/${taskId}/files/${fileId}/finalize`, {
+                method: 'POST'
+            });
+            if (!finalizeResponse.ok) {
+                throw new Error(`Finalize failed: ${await finalizeResponse.text()}`);
+            }
+            progressEl.querySelector('.progress').textContent = 'Done';
+        }
+
         document.getElementById('create-task').addEventListener('submit', async (event) => {
             event.preventDefault();
             const nameInput = document.getElementById('name');
+            const filesInput = document.getElementById('file-input');
+            if (!filesInput.files.length) {
+                alert('Select at least one file.');
+                return;
+            }
+
             const payload = { name: nameInput.value };
             const response = await fetch('/api/tasks', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
             });
-            if (response.ok) {
-                window.location.reload();
-            } else {
+            if (!response.ok) {
                 alert('Failed to create task');
+                return;
             }
+            const task = await response.json();
+            const files = Array.from(filesInput.files);
+            uploadsContainer.innerHTML = '';
+            for (const file of files) {
+                const progressEl = createProgressEntry(file);
+                uploadsContainer.appendChild(progressEl);
+                try {
+                    await uploadFile(task.id, file, progressEl);
+                } catch (err) {
+                    progressEl.querySelector('.progress').textContent = `Error: ${err.message}`;
+                    break;
+                }
+            }
+            window.location.reload();
         });
     </script>
 </body>

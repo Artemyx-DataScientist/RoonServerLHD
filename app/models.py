@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 
 class TaskStatus(str, Enum):
-    NEW = "NEW"
+    CREATED = "CREATED"
+    UPLOADING = "UPLOADING"
+    READY_FOR_PROCESSING = "READY_FOR_PROCESSING"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -17,7 +19,9 @@ class TaskStatus(str, Enum):
 
 
 _ALLOWED_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
-    TaskStatus.NEW: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
+    TaskStatus.CREATED: [TaskStatus.UPLOADING, TaskStatus.CANCELLED],
+    TaskStatus.UPLOADING: [TaskStatus.READY_FOR_PROCESSING, TaskStatus.CANCELLED],
+    TaskStatus.READY_FOR_PROCESSING: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
     TaskStatus.PROCESSING: [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED],
     TaskStatus.COMPLETED: [],
     TaskStatus.FAILED: [],
@@ -51,6 +55,20 @@ class TaskEventRecord:
     created_at: datetime
 
 
+@dataclass
+class TaskFileRecord:
+    id: int
+    task_id: int
+    relative_path: str
+    original_name: Optional[str]
+    expected_size: int
+    uploaded_bytes: int
+    finalized: bool
+    created_at: datetime
+    updated_at: datetime
+    size_bytes: Optional[int]
+
+
 class TaskCreateRequest(BaseModel):
     name: str = Field(..., example="Import classical collection")
 
@@ -69,6 +87,22 @@ class TaskEventResponse(BaseModel):
     task_id: int
     event: str
     created_at: datetime
+
+
+class TaskFileCreateRequest(BaseModel):
+    relative_path: str
+    size_bytes: int = Field(..., gt=0)
+    original_name: Optional[str] = None
+
+
+class TaskFileCreateResponse(BaseModel):
+    file_id: int
+    max_chunk_bytes: int
+
+
+class ChunkUploadResponse(BaseModel):
+    next_offset: int
+    complete: bool
 
 
 class SettingsResponse(BaseModel):

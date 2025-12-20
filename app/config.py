@@ -39,6 +39,8 @@ class AppConfig:
     music_root: Path
     incoming_subdir: str
     temp_subdir: str
+    max_task_size_bytes: int = 10 * 1024 * 1024 * 1024
+    max_chunk_bytes: int = 5 * 1024 * 1024
     allowlist: List[str] = field(default_factory=list)
     cleanup_days: int = 30
     mount_validation_mode: str = "strict"
@@ -49,6 +51,8 @@ class AppConfig:
             "music_root": str(self.music_root),
             "incoming_subdir": self.incoming_subdir,
             "temp_subdir": self.temp_subdir,
+            "max_task_size_bytes": self.max_task_size_bytes,
+            "max_chunk_bytes": self.max_chunk_bytes,
             "allowlist": self.allowlist,
             "cleanup_days": self.cleanup_days,
             "mount_validation_mode": self.mount_validation_mode,
@@ -77,6 +81,18 @@ def _coerce_cleanup_days(value: Optional[Any]) -> int:
         raise ConfigError("cleanup_days must be an integer") from exc
 
 
+def _coerce_positive_int(value: Optional[Any], name: str, default: int) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{name} must be an integer") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{name} must be positive")
+    return parsed
+
+
 def load_config(config_path: Optional[Path] = None) -> AppConfig:
     env_config_path = _get_env("CONFIG_FILE")
     resolved_config_path = Path(env_config_path) if env_config_path else config_path
@@ -99,6 +115,16 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
     allowlist = _coerce_allowlist(_get_env("ALLOWLIST", file_values.get("allowlist")))
     cleanup_days = _coerce_cleanup_days(_get_env("CLEANUP_DAYS", file_values.get("cleanup_days")))
     mount_validation_mode = _get_env("MOUNT_VALIDATION_MODE", file_values.get("mount_validation_mode", "strict"))
+    max_task_size_bytes = _coerce_positive_int(
+        _get_env("MAX_TASK_SIZE_BYTES", file_values.get("max_task_size_bytes")),
+        "max_task_size_bytes",
+        AppConfig.max_task_size_bytes,
+    )
+    max_chunk_bytes = _coerce_positive_int(
+        _get_env("MAX_CHUNK_BYTES", file_values.get("max_chunk_bytes")),
+        "max_chunk_bytes",
+        AppConfig.max_chunk_bytes,
+    )
 
     if mount_validation_mode not in {"strict", "relaxed"}:
         raise ConfigError("mount_validation_mode must be either 'strict' or 'relaxed'")
@@ -110,6 +136,8 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         music_root=music_root,
         incoming_subdir=str(incoming_subdir),
         temp_subdir=str(temp_subdir),
+        max_task_size_bytes=max_task_size_bytes,
+        max_chunk_bytes=max_chunk_bytes,
         allowlist=allowlist,
         cleanup_days=cleanup_days,
         mount_validation_mode=str(mount_validation_mode),
@@ -142,6 +170,16 @@ def load_config_from_mapping(values: Dict[str, Any]) -> AppConfig:
         music_root=music_root,
         incoming_subdir=str(values.get("incoming_subdir", "Incoming")),
         temp_subdir=str(values.get("temp_subdir", ".temp")),
+        max_task_size_bytes=_coerce_positive_int(
+            values.get("max_task_size_bytes"),
+            "max_task_size_bytes",
+            AppConfig.max_task_size_bytes,
+        ),
+        max_chunk_bytes=_coerce_positive_int(
+            values.get("max_chunk_bytes"),
+            "max_chunk_bytes",
+            AppConfig.max_chunk_bytes,
+        ),
         allowlist=_coerce_allowlist(values.get("allowlist")),
         cleanup_days=_coerce_cleanup_days(values.get("cleanup_days")),
         mount_validation_mode=mount_validation_mode,
