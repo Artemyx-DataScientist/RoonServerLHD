@@ -3,9 +3,15 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
-from app.models import TaskEventRecord, TaskRecord, TaskStatus, validate_transition
+from app.models import (
+    TaskEventRecord,
+    TaskFileRecord,
+    TaskRecord,
+    TaskStatus,
+    validate_transition,
+)
 
 
 class Database:
@@ -38,13 +44,25 @@ class Database:
                 CREATE TABLE IF NOT EXISTS task_files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id INTEGER NOT NULL REFERENCES tasks(id),
-                    file_name TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    original_name TEXT,
                     file_hash TEXT,
+                    expected_size INTEGER NOT NULL DEFAULT 0,
+                    uploaded_bytes INTEGER NOT NULL DEFAULT 0,
+                    finalized INTEGER NOT NULL DEFAULT 0,
                     size_bytes INTEGER,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
+            self._ensure_column(cursor, "task_files", "relative_path", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cursor, "task_files", "original_name", "TEXT")
+            self._ensure_column(cursor, "task_files", "expected_size", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(cursor, "task_files", "uploaded_bytes", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(cursor, "task_files", "finalized", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(cursor, "task_files", "size_bytes", "INTEGER")
+            self._ensure_column(cursor, "task_files", "updated_at", "TEXT NOT NULL DEFAULT ''")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS known_hashes (
@@ -66,6 +84,12 @@ class Database:
                 """
             )
             conn.commit()
+
+    def _ensure_column(self, cursor: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _row_to_task(self, row: sqlite3.Row) -> TaskRecord:
         cleanup_after = (
@@ -90,6 +114,21 @@ class Database:
             created_at=datetime.fromisoformat(row["created_at"]).replace(tzinfo=timezone.utc),
         )
 
+    def _row_to_task_file(self, row: sqlite3.Row) -> TaskFileRecord:
+        updated_at_value = row["updated_at"] if row["updated_at"] else row["created_at"]
+        return TaskFileRecord(
+            id=row["id"],
+            task_id=row["task_id"],
+            relative_path=row["relative_path"],
+            original_name=row["original_name"] or row["relative_path"],
+            expected_size=row["expected_size"] or 0,
+            uploaded_bytes=row["uploaded_bytes"] or 0,
+            finalized=bool(row["finalized"]),
+            created_at=datetime.fromisoformat(row["created_at"]).replace(tzinfo=timezone.utc),
+            updated_at=datetime.fromisoformat(updated_at_value).replace(tzinfo=timezone.utc),
+            size_bytes=row["size_bytes"],
+        )
+
     def create_task(self, name: str, cleanup_days: int) -> TaskRecord:
         now = datetime.now(timezone.utc)
         cleanup_after = now + timedelta(days=cleanup_days)
@@ -100,7 +139,7 @@ class Database:
                 INSERT INTO tasks (name, status, created_at, updated_at, cleanup_after)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (name, TaskStatus.NEW.value, now.isoformat(), now.isoformat(), cleanup_after.isoformat()),
+                (name, TaskStatus.CREATED.value, now.isoformat(), now.isoformat(), cleanup_after.isoformat()),
             )
             task_id = cursor.lastrowid
             cursor.execute(
@@ -187,16 +226,101 @@ class Database:
             )
             conn.commit()
 
-    def add_task_files(self, task_id: int, file_names: Iterable[str]) -> None:
+    def create_task_file(
+        self,
+        task_id: int,
+        relative_path: str,
+        original_name: str,
+        expected_size: int,
+    ) -> TaskFileRecord:
         now = datetime.now(timezone.utc)
         with self._connect() as conn:
             cursor = conn.cursor()
-            cursor.executemany(
+            cursor.execute(
                 """
-                INSERT INTO task_files (task_id, file_name, created_at)
-                VALUES (?, ?, ?)
+                INSERT INTO task_files (
+                    task_id, relative_path, original_name, expected_size, uploaded_bytes,
+                    finalized, size_bytes, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, 0, 0, NULL, ?, ?)
                 """,
-                [(task_id, file_name, now.isoformat()) for file_name in file_names],
+                (
+                    task_id,
+                    relative_path,
+                    original_name,
+                    expected_size,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
             )
             conn.commit()
+            cursor.execute("SELECT * FROM task_files WHERE id = ?", (cursor.lastrowid,))
+            row = cursor.fetchone()
+            assert row is not None
+            return self._row_to_task_file(row)
+
+    def get_task_file(self, file_id: int) -> Optional[TaskFileRecord]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM task_files WHERE id = ?", (file_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_task_file(row)
+
+    def list_task_files(self, task_id: int) -> List[TaskFileRecord]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM task_files WHERE task_id = ? ORDER BY created_at ASC",
+                (task_id,),
+            )
+            return [self._row_to_task_file(row) for row in cursor.fetchall()]
+
+    def update_task_file_progress(self, file_id: int, uploaded_bytes: int) -> Optional[TaskFileRecord]:
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE task_files SET uploaded_bytes = ?, updated_at = ? WHERE id = ?",
+                (uploaded_bytes, now.isoformat(), file_id),
+            )
+            conn.commit()
+        return self.get_task_file(file_id)
+
+    def finalize_task_file(self, file_id: int, size_bytes: int) -> Optional[TaskFileRecord]:
+        now = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE task_files
+                SET finalized = 1, size_bytes = ?, updated_at = ?, uploaded_bytes = ?
+                WHERE id = ?
+                """,
+                (size_bytes, now.isoformat(), size_bytes, file_id),
+            )
+            conn.commit()
+        return self.get_task_file(file_id)
+
+    def total_expected_size_for_task(self, task_id: int) -> int:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT SUM(expected_size) as total FROM task_files WHERE task_id = ?",
+                (task_id,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+
+    def all_files_finalized(self, task_id: int) -> bool:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM task_files WHERE task_id = ? AND finalized = 0",
+                (task_id,),
+            )
+            row = cursor.fetchone()
+            pending = int(row[0]) if row else 0
+            return pending == 0
 

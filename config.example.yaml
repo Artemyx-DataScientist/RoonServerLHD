@@ -2,6 +2,8 @@
 music_root: /mnt/music
 incoming_subdir: Incoming
 temp_subdir: .roon_uploader_tmp
+max_task_size_bytes: 21474836480  # 20 GiB
+max_chunk_bytes: 5242880          # 5 MiB
 allowlist:
   - flac
   - mp3

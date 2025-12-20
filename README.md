@@ -3,10 +3,10 @@
 FastAPI + worker skeleton for managing media-processing tasks. The service uses SQLite storage, environment/config-based settings, and simple stubs for task processing.
 
 ## Features
-- FastAPI service with task CRUD stubs and settings endpoints.
+- FastAPI service with task CRUD and resumable uploads (chunked, resumable via offsets).
 - SQLite schema (`tasks`, `task_files`, `known_hashes`, `task_events`) initialized automatically.
 - Task status state machine with guarded transitions.
-- HTML page for creating tasks and viewing their status.
+- HTML page for creating tasks, uploading files with progress, and viewing their status.
 - Worker stub process kept alive for system integration.
 - Configurable through environment variables and optional YAML/JSON config file (environment wins).
 - Systemd unit samples for API and worker services.
@@ -29,6 +29,8 @@ Configuration is loaded from environment variables with optional overrides from 
 | `MUSIC_ROOT` | **Required unless set in config file.** Path to existing music root. | n/a |
 | `INCOMING_SUBDIR` | Destination subdirectory under `music_root`. | `Incoming` |
 | `TEMP_SUBDIR` | Temporary working subdirectory under `music_root`. | `.temp` |
+| `MAX_TASK_SIZE_BYTES` | Maximum total registered bytes per task. | `10737418240` (10 GiB) |
+| `MAX_CHUNK_BYTES` | Maximum accepted chunk size. | `5242880` (5 MiB) |
 | `ALLOWLIST` | Comma-separated allowlist (extensions). | empty list |
 | `CLEANUP_DAYS` | Days until cleanup marker. | `30` |
 | `MOUNT_VALIDATION_MODE` | `strict` or `relaxed`. | `strict` |
@@ -44,6 +46,7 @@ Config file keys mirror the environment variables. Example `config.example.yaml`
    MUSIC_ROOT=/mnt/music uvicorn app.main:app --reload
    ```
 4. Open http://127.0.0.1:8000/ to use the HTML form. API endpoints live under `/api/...`.
+   - The HTML page supports selecting multiple files (or a directory) and uploads in chunks with progress.
 
 ## Worker stub
 The worker keeps a process alive for system integration:
@@ -68,7 +71,7 @@ Use `/etc/roonhelper.env` to provide environment overrides for both units.
 ## Database schema
 SQLite tables initialized on startup:
 - `tasks`: id, name, status, created_at, updated_at, cleanup_after
-- `task_files`: id, task_id, file_name, file_hash, size_bytes, created_at
+- `task_files`: id, task_id, relative_path, original_name, expected_size, uploaded_bytes, finalized, size_bytes, created_at, updated_at
 - `known_hashes`: id, file_hash (unique), first_seen_task_id, created_at
 - `task_events`: id, task_id, event, created_at
 
