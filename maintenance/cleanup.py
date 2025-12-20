@@ -47,8 +47,16 @@ def _parse_args() -> CleanupArgs:
 
 
 def _default_config_path() -> Optional[Path]:
-    candidate = Path("config.yaml")
-    return candidate if candidate.exists() else None
+    env_config = os.environ.get("CONFIG_FILE")
+    if env_config:
+        config_path = Path(env_config)
+        if config_path.exists():
+            return config_path
+
+    for candidate in (Path("config.yaml"), Path("/etc/roonhelper/config.yaml")):
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _coerce_bool(value: object) -> bool:

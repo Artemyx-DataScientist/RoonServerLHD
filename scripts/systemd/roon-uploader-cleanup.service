@@ -4,10 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/RoonServerLHD
-ExecStart=/usr/bin/env python -m maintenance.cleanup
+Environment=ROONHELPER_USER=roon
+Environment=ROONHELPER_GROUP=roon
+Environment=ROONHELPER_ROOT=/opt/roonhelper
+Environment=CONFIG_FILE=/etc/roonhelper/config.yaml
+EnvironmentFile=/etc/roonhelper.env
+WorkingDirectory=%E{ROONHELPER_ROOT}
+User=%E{ROONHELPER_USER}
+Group=%E{ROONHELPER_GROUP}
+ExecStart=/usr/bin/env CONFIG_FILE=%E{CONFIG_FILE} python -m maintenance.cleanup --config %E{CONFIG_FILE}
 Restart=on-failure
-EnvironmentFile=-/etc/roonhelper.env
 
 [Install]
 WantedBy=multi-user.target
