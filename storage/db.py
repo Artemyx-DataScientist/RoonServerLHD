@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from app.models import (
     TaskEventRecord,
@@ -35,10 +36,12 @@ class Database:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    cleanup_after TEXT
+                    cleanup_after TEXT,
+                    context TEXT DEFAULT '{}'
                 )
                 """
             )
+            self._ensure_column(cursor, "tasks", "context", "TEXT DEFAULT '{}' NOT NULL")
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS task_files (
@@ -97,6 +100,11 @@ class Database:
             if row["cleanup_after"]
             else None
         )
+        raw_context = row["context"] if "context" in row.keys() else "{}"
+        try:
+            parsed_context: Dict[str, object] = json.loads(raw_context) if raw_context else {}
+        except json.JSONDecodeError:
+            parsed_context = {}
         return TaskRecord(
             id=row["id"],
             name=row["name"],
@@ -104,6 +112,7 @@ class Database:
             created_at=datetime.fromisoformat(row["created_at"]).replace(tzinfo=timezone.utc),
             updated_at=datetime.fromisoformat(row["updated_at"]).replace(tzinfo=timezone.utc),
             cleanup_after=cleanup_after,
+            context=parsed_context,
         )
 
     def _row_to_event(self, row: sqlite3.Row) -> TaskEventRecord:
@@ -136,10 +145,17 @@ class Database:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO tasks (name, status, created_at, updated_at, cleanup_after)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO tasks (name, status, created_at, updated_at, cleanup_after, context)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (name, TaskStatus.CREATED.value, now.isoformat(), now.isoformat(), cleanup_after.isoformat()),
+                (
+                    name,
+                    TaskStatus.CREATED.value,
+                    now.isoformat(),
+                    now.isoformat(),
+                    cleanup_after.isoformat(),
+                    json.dumps({}),
+                ),
             )
             task_id = cursor.lastrowid
             cursor.execute(
@@ -223,6 +239,34 @@ class Database:
             cursor.execute(
                 "INSERT INTO task_events (task_id, event, created_at) VALUES (?, ?, ?)",
                 (task_id, new_status.value.lower(), now.isoformat()),
+            )
+            conn.commit()
+        return self.get_task(task_id)
+
+    def update_task_context(self, task_id: int, updates: Dict[str, object]) -> Optional[TaskRecord]:
+        task = self.get_task(task_id)
+        if not task:
+            return None
+        merged = {**task.context, **updates}
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE tasks SET context = ? WHERE id = ?",
+                (json.dumps(merged), task_id),
+            )
+            conn.commit()
+        return self.get_task(task_id)
+
+    def clear_task_context_keys(self, task_id: int, keys: Iterable[str]) -> Optional[TaskRecord]:
+        task = self.get_task(task_id)
+        if not task:
+            return None
+        remaining = {key: value for key, value in task.context.items() if key not in keys}
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE tasks SET context = ? WHERE id = ?",
+                (json.dumps(remaining), task_id),
             )
             conn.commit()
         return self.get_task(task_id)

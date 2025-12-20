@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from mutagen import File as MutagenFile
 
 from app.config import AppConfig, ConfigError, load_config, update_config
 from app.models import (
@@ -17,9 +18,13 @@ from app.models import (
     TaskEventRecord,
     TaskFileCreateRequest,
     TaskFileCreateResponse,
+    TaskPasswordRequest,
     TaskRecord,
     TaskResponse,
     TaskStatus,
+    TaskTagsResponse,
+    TaskTagsUpdateRequest,
+    TrackTag,
 )
 from storage.db import Database
 
@@ -50,6 +55,31 @@ def _validate_relative_path(relative_path: str) -> str:
     if path_obj.is_absolute() or any(part == ".." for part in path_obj.parts):
         raise HTTPException(status_code=400, detail="Invalid relative_path")
     return normalized
+
+
+def _read_tag_fields(file_path: Path, display_path: Optional[str] = None) -> TrackTag:
+    audio = MutagenFile(file_path, easy=True)
+    if not audio or not audio.tags:
+        return TrackTag(path=display_path or str(file_path.name), artist=None, album=None, title=None, year=None)
+
+    def _first_value(key: str) -> Optional[str]:
+        values = audio.tags.get(key)
+        if not values:
+            return None
+        return str(values[0]).strip() if str(values[0]).strip() else None
+
+    year_value = _first_value("date") or _first_value("year")
+    return TrackTag(
+        path=display_path or str(file_path.name),
+        artist=_first_value("artist"),
+        album=_first_value("album"),
+        title=_first_value("title"),
+        year=year_value,
+    )
+
+
+def _tags_incomplete(tag: TrackTag) -> bool:
+    return not tag.artist or not tag.album or not tag.title
 
 
 @app.on_event("startup")
@@ -305,5 +335,135 @@ def finalize_task_file(
         db.add_event(task_id, "ready_for_processing")
     updated_task = db.get_task(task_id)
     assert updated_task is not None
+    return _task_to_response(updated_task)
+
+
+@app.post("/api/tasks/{task_id}/password", response_model=TaskResponse)
+def submit_task_password(
+    task_id: int,
+    payload: TaskPasswordRequest,
+    db: Database = Depends(get_db),
+) -> TaskResponse:
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.NEED_PASSWORD:
+        raise HTTPException(status_code=400, detail="Task is not waiting for a password")
+
+    db.update_task_context(task_id, {"password": payload.password, "password_required": False})
+    updated_task = db.update_status(task_id, TaskStatus.PROCESSING)
+    if not updated_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _task_to_response(updated_task)
+
+
+def _task_pending_tags(task: TaskRecord) -> List[Dict[str, str]]:
+    raw_pending = task.context.get("pending_tags") if task.context else None
+    if not raw_pending:
+        return []
+    normalized: List[Dict[str, str]] = []
+    for entry in raw_pending:
+        source = entry.get("source") if isinstance(entry, dict) else None
+        relative_output = entry.get("relative_output") if isinstance(entry, dict) else None
+        if source and relative_output:
+            normalized.append({"source": str(source), "relative_output": str(relative_output)})
+    return normalized
+
+
+@app.get("/api/tasks/{task_id}/tags", response_model=TaskTagsResponse)
+def get_pending_tags(
+    task_id: int,
+    db: Database = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+) -> TaskTagsResponse:
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.NEED_TAGS:
+        raise HTTPException(status_code=400, detail="Task is not waiting for tags")
+    pending = _task_pending_tags(task)
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending tags recorded")
+
+    temp_dir = _task_temp_dir(config, task_id)
+    tracks: List[TrackTag] = []
+    for entry in pending:
+        source_path = temp_dir / Path(entry["source"])
+        if not source_path.exists():
+            raise HTTPException(status_code=404, detail=f"Source file missing: {entry['source']}")
+        relative_output = entry["relative_output"]
+        track_tags = _read_tag_fields(source_path, display_path=relative_output)
+        tracks.append(track_tags)
+
+    return TaskTagsResponse(tracks=tracks)
+
+
+def _apply_tag_updates(
+    source_path: Path,
+    updated_values: TrackTag,
+    batch_artist: Optional[str],
+    batch_album: Optional[str],
+    batch_year: Optional[str],
+) -> None:
+    audio = MutagenFile(source_path, easy=True)
+    if not audio:
+        raise HTTPException(status_code=400, detail=f"Unsupported audio format for {source_path.name}")
+
+    current = _read_tag_fields(source_path, display_path=updated_values.path)
+    artist = updated_values.artist or batch_artist or current.artist
+    album = updated_values.album or batch_album or current.album
+    title = updated_values.title or current.title
+    year = updated_values.year or batch_year or current.year
+
+    if not artist or not album or not title:
+        raise HTTPException(status_code=400, detail=f"Missing mandatory tags for {updated_values.path}")
+
+    audio["artist"] = [artist]
+    audio["album"] = [album]
+    audio["title"] = [title]
+    if year:
+        audio["date"] = [year]
+    audio.save()
+
+
+@app.post("/api/tasks/{task_id}/tags", response_model=TaskResponse)
+def update_pending_tags(
+    task_id: int,
+    payload: TaskTagsUpdateRequest,
+    db: Database = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+) -> TaskResponse:
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.NEED_TAGS:
+        raise HTTPException(status_code=400, detail="Task is not waiting for tags")
+
+    pending = _task_pending_tags(task)
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending tags recorded")
+
+    pending_map = {entry["relative_output"]: entry for entry in pending}
+    temp_dir = _task_temp_dir(config, task_id)
+
+    for track in payload.tracks:
+        if track.path not in pending_map:
+            raise HTTPException(status_code=400, detail=f"Unexpected track path: {track.path}")
+        source_relative = Path(pending_map[track.path]["source"])
+        source_path = temp_dir / source_relative
+        if not source_path.exists():
+            raise HTTPException(status_code=404, detail=f"Source file missing: {track.path}")
+        _apply_tag_updates(
+            source_path,
+            TrackTag(path=track.path, artist=track.artist, album=track.album, title=track.title, year=track.year),
+            payload.batch_artist,
+            payload.batch_album,
+            payload.batch_year,
+        )
+
+    db.clear_task_context_keys(task_id, {"pending_tags"})
+    updated_task = db.update_status(task_id, TaskStatus.PROCESSING)
+    if not updated_task:
+        raise HTTPException(status_code=404, detail="Task not found")
     return _task_to_response(updated_task)
 

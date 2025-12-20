@@ -9,6 +9,11 @@
         table { border-collapse: collapse; width: 100%; max-width: 800px; }
         th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
         th { background: #f2f2f2; }
+        .actions { margin-top: 2rem; }
+        .hidden { display: none; }
+        .tag-editor { border: 1px solid #ccc; padding: 1rem; margin-top: 1rem; }
+        .batch-controls { margin-bottom: 0.75rem; }
+        .badge { padding: 0.2rem 0.5rem; border-radius: 0.3rem; background: #eef; }
     </style>
 </head>
 <body>
@@ -32,7 +37,7 @@
                 <tr>
                     <td>{{ task.id }}</td>
                     <td>{{ task.name }}</td>
-                    <td>{{ task.status }}</td>
+                    <td><span class="badge">{{ task.status }}</span></td>
                     <td>{{ task.created_at }}</td>
                 </tr>
                 {% endfor %}
@@ -45,8 +50,42 @@
         <div id="uploads"></div>
     </section>
 
+    <section class="actions">
+        <h2>Actions</h2>
+        <div id="password-actions"></div>
+        <div id="tag-actions"></div>
+        <div id="tag-editor" class="tag-editor hidden">
+            <h3>Правка тегов для задачи <span id="tag-task-id"></span></h3>
+            <div class="batch-controls">
+                <label>Batch Artist: <input id="batch-artist"></label>
+                <label>Batch Album: <input id="batch-album"></label>
+                <label>Batch Year: <input id="batch-year"></label>
+                <button id="apply-batch" type="button">Применить к таблице</button>
+            </div>
+            <table id="tag-table">
+                <thead>
+                    <tr><th>Путь</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <div style="margin-top: 0.75rem;">
+                <button id="submit-tags" type="button">Сохранить теги</button>
+                <button id="cancel-tags" type="button">Отмена</button>
+            </div>
+        </div>
+    </section>
+
     <script>
         const uploadsContainer = document.getElementById('uploads');
+        const tasksData = {{ tasks|tojson }};
+        const passwordActions = document.getElementById('password-actions');
+        const tagActions = document.getElementById('tag-actions');
+        const tagEditor = document.getElementById('tag-editor');
+        const tagTableBody = document.querySelector('#tag-table tbody');
+        const tagTaskId = document.getElementById('tag-task-id');
+        const batchArtist = document.getElementById('batch-artist');
+        const batchAlbum = document.getElementById('batch-album');
+        const batchYear = document.getElementById('batch-year');
 
         function createProgressEntry(file) {
             const wrapper = document.createElement('div');
@@ -133,6 +172,128 @@
             }
             window.location.reload();
         });
+
+        function renderPasswordActions(tasks) {
+            passwordActions.innerHTML = '';
+            const waiting = tasks.filter(task => task.status === 'NEED_PASSWORD');
+            waiting.forEach(task => {
+                const form = document.createElement('form');
+                form.innerHTML = `
+                    <h3>Задача ${task.id}: требуется пароль</h3>
+                    <input type="password" name="password" placeholder="Введите пароль" required>
+                    <button type="submit">Продолжить</button>
+                `;
+                form.addEventListener('submit', async (evt) => {
+                    evt.preventDefault();
+                    const password = form.querySelector('input[name="password"]').value;
+                    const response = await fetch(`/api/tasks/${task.id}/password`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password })
+                    });
+                    if (!response.ok) {
+                        alert('Не удалось отправить пароль');
+                        return;
+                    }
+                    alert('Пароль принят, обработка возобновлена');
+                    window.location.reload();
+                });
+                passwordActions.appendChild(form);
+            });
+        }
+
+        function renderTagActions(tasks) {
+            tagActions.innerHTML = '';
+            const waiting = tasks.filter(task => task.status === 'NEED_TAGS');
+            waiting.forEach(task => {
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = `
+                    <h3>Задача ${task.id}: требуется правка тегов</h3>
+                    <button type="button">Открыть редактор тегов</button>
+                `;
+                const openButton = wrapper.querySelector('button');
+                openButton.addEventListener('click', () => loadTags(task.id));
+                tagActions.appendChild(wrapper);
+            });
+        }
+
+        function populateTagEditor(taskId, tracks) {
+            tagTaskId.textContent = taskId;
+            tagTableBody.innerHTML = '';
+            tracks.forEach(track => {
+                const row = document.createElement('tr');
+                row.dataset.path = track.path;
+                row.innerHTML = `
+                    <td>${track.path}</td>
+                    <td><input type="text" value="${track.title || ''}"></td>
+                    <td><input type="text" value="${track.artist || ''}"></td>
+                    <td><input type="text" value="${track.album || ''}"></td>
+                    <td><input type="text" value="${track.year || ''}"></td>
+                `;
+                tagTableBody.appendChild(row);
+            });
+            tagEditor.classList.remove('hidden');
+        }
+
+        async function loadTags(taskId) {
+            const response = await fetch(`/api/tasks/${taskId}/tags`);
+            if (!response.ok) {
+                alert('Не удалось загрузить теги');
+                return;
+            }
+            const payload = await response.json();
+            populateTagEditor(taskId, payload.tracks);
+        }
+
+        document.getElementById('cancel-tags').addEventListener('click', () => {
+            tagEditor.classList.add('hidden');
+            tagTableBody.innerHTML = '';
+        });
+
+        document.getElementById('apply-batch').addEventListener('click', () => {
+            const rows = Array.from(tagTableBody.querySelectorAll('tr'));
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('input');
+                if (batchArtist.value) { cells[1].value = batchArtist.value; }
+                if (batchAlbum.value) { cells[2].value = batchAlbum.value; }
+                if (batchYear.value) { cells[3].value = batchYear.value; }
+            });
+        });
+
+        document.getElementById('submit-tags').addEventListener('click', async () => {
+            const rows = Array.from(tagTableBody.querySelectorAll('tr'));
+            const taskId = tagTaskId.textContent;
+            const tracks = rows.map(row => {
+                const inputs = row.querySelectorAll('input');
+                return {
+                    path: row.dataset.path,
+                    title: inputs[0].value || null,
+                    artist: inputs[1].value || null,
+                    album: inputs[2].value || null,
+                    year: inputs[3].value || null,
+                };
+            });
+            const payload = {
+                tracks,
+                batch_artist: batchArtist.value || null,
+                batch_album: batchAlbum.value || null,
+                batch_year: batchYear.value || null,
+            };
+            const response = await fetch(`/api/tasks/${taskId}/tags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                alert('Не удалось сохранить теги');
+                return;
+            }
+            alert('Теги обновлены, обработка продолжается');
+            window.location.reload();
+        });
+
+        renderPasswordActions(tasksData);
+        renderTagActions(tasksData);
     </script>
 </body>
 </html>
