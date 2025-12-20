@@ -1,0 +1,13 @@
+[Unit]
+Description=Roon Helper Cleanup Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/RoonServerLHD
+ExecStart=/usr/bin/env python -m maintenance.cleanup
+Restart=on-failure
+EnvironmentFile=-/etc/roonhelper.env
+
+[Install]
+WantedBy=multi-user.target
