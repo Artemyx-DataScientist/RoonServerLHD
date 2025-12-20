@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: documentation-text-hygiene
+        name: Documentation text hygiene
+        entry: python scripts/check_no_nulls.py
+        language: system
+        files: "(?i)\\.(md|txt|ya?ml|json)$"
+        pass_filenames: true
