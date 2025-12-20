@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from app.config import AppConfig, load_config
 from app.models import TaskFileRecord, TaskRecord, TaskStatus
@@ -167,6 +167,7 @@ def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
     duplicates_or_skips = False
     destination_root = _plan_destination(task, incoming_root)
     file_statuses: Dict[str, Dict[str, str]] = {}
+    seen_hashes_in_task: Set[str] = set()
 
     for outcome in outcomes:
         relative_key = str(outcome.relative_output)
@@ -179,16 +180,17 @@ def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
         db.add_event(task.id, f"hashing:{outcome.relative_output}")
         file_hash = _sha256sum(outcome.source_path)
         outcome.file_hash = file_hash
-        db.update_task_file_hash(outcome.record.id, file_hash)
 
-        if db.hash_exists(file_hash):
+        if file_hash in seen_hashes_in_task or db.hash_exists(file_hash):
             duplicates_or_skips = True
             outcome.status = "DUPLICATE"
             file_statuses[relative_key] = {"status": outcome.status, "hash": file_hash}
             db.add_event(task.id, f"duplicate_detected:{outcome.relative_output}")
             continue
 
+        seen_hashes_in_task.add(file_hash)
         db.add_known_hash(file_hash, task_id=task.id)
+        db.update_task_file_hash(outcome.record.id, file_hash)
         target_path = destination_root / outcome.relative_output
         target_path.parent.mkdir(parents=True, exist_ok=True)
         try:
