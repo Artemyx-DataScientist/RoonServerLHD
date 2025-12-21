@@ -284,6 +284,16 @@ def _ensure_task_for_upload(db: Database, task_id: int) -> TaskRecord:
     return task
 
 
+def _ensure_uploading_status(task: TaskRecord, db: Database) -> TaskRecord:
+    updated_task = task
+    if task.status == TaskStatus.CREATED:
+        updated_task = db.update_status(task.id, TaskStatus.UPLOADING) or task
+    elif task.status == TaskStatus.READY_FOR_PROCESSING:
+        updated_task = db.update_status(task.id, TaskStatus.UPLOADING) or task
+        db.add_event(task.id, "returned_to_uploading")
+    return updated_task
+
+
 @app.post("/api/tasks/{task_id}/files", response_model=TaskFileCreateResponse)
 def register_task_file(
     task_id: int,
@@ -308,8 +318,7 @@ def register_task_file(
     part_path = uploads_dir / f"{file_record.id}.part"
     part_path.touch(exist_ok=True)
 
-    if task.status == TaskStatus.CREATED:
-        db.update_status(task_id, TaskStatus.UPLOADING)
+    task = _ensure_uploading_status(task, db)
     db.add_event(task_id, f"file_registered:{file_record.id}")
     return TaskFileCreateResponse(file_id=file_record.id, max_chunk_bytes=config.max_chunk_bytes)
 
@@ -373,8 +382,7 @@ async def upload_task_file_chunk(
     if new_size > file_record.expected_size:
         raise HTTPException(status_code=400, detail="Uploaded data exceeds expected size")
     db.update_task_file_progress(file_id, new_size)
-    if task.status == TaskStatus.CREATED:
-        db.update_status(task_id, TaskStatus.UPLOADING)
+    _ensure_uploading_status(task, db)
     db.add_event(task_id, f"chunk:{file_id}:{chunk_length}")
     return ChunkUploadResponse(next_offset=new_size, complete=new_size >= file_record.expected_size)
 
