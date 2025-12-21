@@ -32,6 +32,12 @@ class PasswordRequiredError(RuntimeError):
         self.archive_path = archive_path
 
 
+class MountUnavailableError(RuntimeError):
+    def __init__(self, mount_path: Path) -> None:
+        super().__init__(f"Mount unavailable: {mount_path}")
+        self.mount_path = mount_path
+
+
 @dataclass
 class FileOutcome:
     record: Optional[TaskFileRecord]
@@ -64,6 +70,8 @@ def _validate_mounts(config: AppConfig) -> Tuple[Path, Path]:
 
     if not config.music_root.exists() or not config.music_root.is_dir():
         raise RuntimeError(f"music_root is not accessible: {config.music_root}")
+    if config.mount_validation_mode == "strict" and not config.music_root.is_mount():
+        raise MountUnavailableError(config.music_root)
     if not _is_writable(config.music_root):
         raise RuntimeError(f"music_root is not writable: {config.music_root}")
 
@@ -83,6 +91,24 @@ def _validate_mounts(config: AppConfig) -> Tuple[Path, Path]:
 
 def _task_temp_dir(config: AppConfig, task_id: int) -> Path:
     return config.music_root / config.temp_subdir / str(task_id)
+
+
+def _record_temp_state(db: Database, temp_dir: Path, task_id: int, label: str) -> None:
+    if not temp_dir.exists():
+        return
+    for path in sorted(temp_dir.rglob("*")):
+        relative_path = path.relative_to(temp_dir)
+        db.add_event(task_id, f"temp_leftover:{label}:{relative_path}")
+
+
+def _cleanup_temp_dir(db: Database, temp_dir: Path, task_id: int) -> None:
+    if not temp_dir.exists():
+        return
+    try:
+        shutil.rmtree(temp_dir)
+        db.add_event(task_id, "temp_cleaned")
+    except OSError as exc:  # noqa: PERF203
+        db.add_event(task_id, f"temp_cleanup_failed:{exc}")
 
 
 def _allowlist_matches(path: Path, allowlist: Sequence[str]) -> bool:
@@ -466,6 +492,7 @@ def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
     final_status = TaskStatus.DONE_WITH_DUPLICATES if duplicates_or_skips else TaskStatus.DONE
     db.update_status(task.id, final_status)
     db.add_event(task.id, f"task_completed:{final_status.value}")
+    _cleanup_temp_dir(db, _task_temp_dir(config, task.id), task.id)
 
 
 def main() -> None:
@@ -484,17 +511,29 @@ def main() -> None:
             for task in pending:
                 if task.status not in {TaskStatus.PROCESSING, TaskStatus.READY_FOR_PROCESSING}:
                     continue
+                db.add_event(task.id, "worker_started")
+                temp_dir = _task_temp_dir(config, task.id)
                 try:
-                    db.add_event(task.id, "worker_started")
                     if task.status == TaskStatus.READY_FOR_PROCESSING:
                         db.update_status(task.id, TaskStatus.PROCESSING)
                         db.add_event(task.id, "queued")
                     _process_task(db, config, task)
+                    db.add_event(task.id, "worker_finished")
+                except MountUnavailableError as exc:
+                    logger.exception("Mount unavailable for task %s", task.id)
+                    db.add_event(task.id, "mount_unavailable")
+                    _record_temp_state(db, temp_dir, task.id, "mount_unavailable")
+                    db.update_task_context(task.id, {"error_message": str(exc)})
+                    db.add_event(task.id, f"worker_failed:{exc}")
+                    db.update_status(task.id, TaskStatus.ERROR)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Failed to process task %s", task.id)
+                    _record_temp_state(db, temp_dir, task.id, "error")
                     db.update_task_context(task.id, {"error_message": str(exc)})
-                    db.add_event(task.id, f"task_failed:{exc}")
+                    db.add_event(task.id, f"worker_failed:{exc}")
                     db.update_status(task.id, TaskStatus.ERROR)
+                else:
+                    _record_temp_state(db, temp_dir, task.id, "post_process")
             time.sleep(5)
     except KeyboardInterrupt:
         logger.info("Worker shutdown requested")
