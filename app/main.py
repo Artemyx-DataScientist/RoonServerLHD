@@ -27,6 +27,7 @@ from app.models import (
     TrackTag,
 )
 from storage.db import Database
+from fastapi.encoders import jsonable_encoder
 
 
 templates = Jinja2Templates(directory="templates")
@@ -123,11 +124,11 @@ def _event_to_response(event_record: TaskEventRecord) -> TaskEventResponse:
 
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request, db: Database = Depends(get_db)) -> HTMLResponse:
-    tasks = [_task_to_response(task) for task in db.list_tasks()]
+    tasks = [jsonable_encoder(_task_to_response(t)) for t in db.list_tasks()]
     return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "tasks": tasks},
-    )
+    "index.html",
+    {"request": request, "tasks": tasks},
+)
 
 
 @app.post("/api/tasks", response_model=TaskResponse)
