@@ -129,7 +129,7 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
     if mount_validation_mode not in {"strict", "relaxed"}:
         raise ConfigError("mount_validation_mode must be either 'strict' or 'relaxed'")
 
-    db_path_value = file_values.get("db_path")
+    db_path_value = _get_env("DB_PATH", file_values.get("db_path"))
     db_path = Path(db_path_value) if db_path_value else AppConfig.db_path
 
     return AppConfig(
@@ -183,5 +183,5 @@ def load_config_from_mapping(values: Dict[str, Any]) -> AppConfig:
         allowlist=_coerce_allowlist(values.get("allowlist")),
         cleanup_days=_coerce_cleanup_days(values.get("cleanup_days")),
         mount_validation_mode=mount_validation_mode,
-        db_path=Path(values.get("db_path", "storage/app.db")),
+        db_path=Path(values.get("db_path", AppConfig.db_path)),
     )
