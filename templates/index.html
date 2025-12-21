@@ -14,6 +14,12 @@
         .tag-editor { border: 1px solid #ccc; padding: 1rem; margin-top: 1rem; }
         .batch-controls { margin-bottom: 0.75rem; }
         .badge { padding: 0.2rem 0.5rem; border-radius: 0.3rem; background: #eef; }
+        .status-ok { background: #e6ffed; color: #0b6b2f; }
+        .status-error { background: #ffe6e6; color: #8c1a1a; }
+        .status-warning { background: #fff6e6; color: #8c5a00; }
+        .event-log { font-size: 0.9rem; line-height: 1.3; }
+        .stuck { border-left: 4px solid #ffb347; }
+        .section-card { border: 1px solid #ddd; padding: 1rem; margin-top: 1rem; border-radius: 0.3rem; }
     </style>
 </head>
 <body>
@@ -28,21 +34,16 @@
 
     <section>
         <h2>Existing tasks</h2>
-        <table>
-            <thead>
-                <tr><th>ID</th><th>Name</th><th>Status</th><th>Created</th></tr>
-            </thead>
-            <tbody id="tasks-body">
-                {% for task in tasks %}
-                <tr>
-                    <td>{{ task.id }}</td>
-                    <td>{{ task.name }}</td>
-                    <td><span class="badge">{{ task.status }}</span></td>
-                    <td>{{ task.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div id="health" class="section-card"></div>
+        <div class="section-card">
+            <h3>Мониторинг задач</h3>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Name</th><th>Status</th><th>Last event</th><th>Last event at</th><th>Recent events</th><th>Debug</th></tr>
+                </thead>
+                <tbody id="overview-body"></tbody>
+            </table>
+        </div>
     </section>
 
     <section>
@@ -77,7 +78,7 @@
 
     <script>
         const uploadsContainer = document.getElementById('uploads');
-        const tasksData = {{ tasks|tojson }};
+        let tasksData = {{ tasks|tojson }};
         const passwordActions = document.getElementById('password-actions');
         const tagActions = document.getElementById('tag-actions');
         const tagEditor = document.getElementById('tag-editor');
@@ -292,8 +293,92 @@
             window.location.reload();
         });
 
+        function statusBadge(status) {
+            const span = document.createElement('span');
+            span.textContent = status;
+            span.classList.add('badge');
+            if (['ERROR', 'FAILED'].includes(status)) {
+                span.classList.add('status-error');
+            } else if (['NEED_PASSWORD', 'NEED_TAGS', 'CANCELLED'].includes(status)) {
+                span.classList.add('status-warning');
+            } else if (['DONE', 'DONE_WITH_DUPLICATES', 'COMPLETED'].includes(status)) {
+                span.classList.add('status-ok');
+            }
+            return span;
+        }
+
+        function renderOverview(rows) {
+            const body = document.getElementById('overview-body');
+            body.innerHTML = '';
+            rows.forEach(entry => {
+                const tr = document.createElement('tr');
+                if (entry.is_stuck) {
+                    tr.classList.add('stuck');
+                }
+                const lastEvent = entry.recent_events.at(-1);
+                tr.innerHTML = `
+                    <td>${entry.task.id}</td>
+                    <td>${entry.task.name}</td>
+                    <td></td>
+                    <td>${lastEvent ? lastEvent.event : '—'}</td>
+                    <td>${entry.task.last_event_at || '—'}</td>
+                    <td class="event-log"></td>
+                    <td><a href="/api/tasks/${entry.task.id}/debug" target="_blank">/debug</a></td>
+                `;
+                tr.querySelector('td:nth-child(3)').appendChild(statusBadge(entry.task.status));
+                const eventsCell = tr.querySelector('.event-log');
+                eventsCell.innerHTML = entry.recent_events
+                    .map(evt => {
+                        const lower = evt.event.toLowerCase();
+                        const cls = (lower.includes('fail') || lower.includes('error')) ? 'status-error badge' : '';
+                        return `<div class="${cls}">${evt.event} <small>${evt.created_at}</small></div>`;
+                    })
+                    .join('');
+                body.appendChild(tr);
+            });
+        }
+
+        async function loadOverview() {
+            try {
+                const response = await fetch('/api/tasks/overview');
+                if (!response.ok) {
+                    throw new Error('Не удалось загрузить статус задач');
+                }
+                const payload = await response.json();
+                renderOverview(payload);
+                tasksData = payload.map(item => item.task);
+                renderPasswordActions(tasksData);
+                renderTagActions(tasksData);
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function loadHealth() {
+            const container = document.getElementById('health');
+            try {
+                const response = await fetch('/health');
+                if (!response.ok) {
+                    throw new Error('healthcheck failed');
+                }
+                const payload = await response.json();
+                container.innerHTML = `
+                    <strong>API health:</strong> ${payload.status}<br>
+                    <strong>Worker:</strong> ${payload.worker_status}${payload.worker_heartbeat_at ? ` (last beat ${payload.worker_heartbeat_at})` : ' (no heartbeat yet)'}
+                `;
+                if (payload.worker_status !== 'ok') {
+                    container.classList.add('status-warning');
+                }
+            } catch (err) {
+                container.innerHTML = `Ошибка получения статуса: ${err.message}`;
+                container.classList.add('status-error');
+            }
+        }
+
         renderPasswordActions(tasksData);
         renderTagActions(tasksData);
+        loadOverview();
+        loadHealth();
     </script>
 </body>
 </html>

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import shutil
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -11,6 +14,9 @@ from mutagen import File as MutagenFile
 from app.config import AppConfig, ConfigError, load_config, update_config
 from app.models import (
     ChunkUploadResponse,
+    DebugDiskState,
+    DebugFileState,
+    DebugTaskResponse,
     SettingsResponse,
     SettingsUpdateRequest,
     TaskCreateRequest,
@@ -23,6 +29,8 @@ from app.models import (
     TaskRecord,
     TaskResponse,
     TaskStatus,
+    TaskSummaryResponse,
+    TaskSummaryWithEvents,
     TaskTagsResponse,
     TaskTagsUpdateRequest,
     TrackTag,
@@ -33,6 +41,7 @@ from fastapi.encoders import jsonable_encoder
 
 templates = Jinja2Templates(directory="templates")
 app = FastAPI(title="Roon Server Helper API")
+STUCK_THRESHOLD_MINUTES = 15
 
 
 def _resolve_config() -> AppConfig:
@@ -233,9 +242,21 @@ def update_settings(
     return SettingsResponse(**new_config.as_dict())
 
 
-@app.get("/health", response_model=Dict[str, str])
-def healthcheck() -> Dict[str, str]:
-    return {"status": "ok"}
+@app.get("/health", response_model=Dict[str, object])
+def healthcheck(db: Database = Depends(get_db)) -> Dict[str, object]:
+    heartbeat = db.last_worker_heartbeat()
+    now = datetime.now(timezone.utc)
+    heartbeat_age_seconds: Optional[float] = None
+    worker_status = "unknown"
+    if heartbeat:
+        heartbeat_age_seconds = (now - heartbeat).total_seconds()
+        worker_status = "stale" if heartbeat_age_seconds > 120 else "ok"
+    return {
+        "status": "ok",
+        "worker_status": worker_status,
+        "worker_heartbeat_at": heartbeat.isoformat() if heartbeat else None,
+        "worker_heartbeat_age_seconds": heartbeat_age_seconds,
+    }
 
 
 def _parse_content_range(header_value: str) -> tuple[int, int, int]:
@@ -532,4 +553,140 @@ def update_pending_tags(
     if not updated_task:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_to_response(updated_task)
+
+
+def _task_last_event(db: Database, task_id: int) -> Optional[TaskEventRecord]:
+    return db.last_event(task_id)
+
+
+def _task_recent_events(db: Database, task_id: int, limit: int) -> List[TaskEventRecord]:
+    return db.list_recent_events(task_id, limit)
+
+
+def _is_task_stuck(task: TaskRecord, last_event_at: Optional[datetime]) -> bool:
+    if task.status in {
+        TaskStatus.DONE,
+        TaskStatus.DONE_WITH_DUPLICATES,
+        TaskStatus.ERROR,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    }:
+        return False
+
+    reference_time = last_event_at or task.updated_at or task.created_at
+    age = datetime.now(timezone.utc) - reference_time
+    return age > timedelta(minutes=STUCK_THRESHOLD_MINUTES)
+
+
+def _task_to_summary(
+    task_record: TaskRecord, last_event: Optional[TaskEventRecord], recent_events: List[TaskEventRecord]
+) -> TaskSummaryWithEvents:
+    last_event_at = last_event.created_at if last_event else None
+    return TaskSummaryWithEvents(
+        task=TaskSummaryResponse(**_task_to_response(task_record).dict(), last_event_at=last_event_at),
+        recent_events=[_event_to_response(event) for event in recent_events],
+        is_stuck=_is_task_stuck(task_record, last_event_at),
+    )
+
+
+def _dir_size_bytes(path: Path) -> int:
+    total = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                total += child.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _build_debug_files(
+    config: AppConfig, task_id: int, file_records: List[TaskFileRecord]
+) -> List[DebugFileState]:
+    results: List[DebugFileState] = []
+    for record in file_records:
+        final_path = _task_temp_dir(config, task_id) / record.relative_path
+        final_exists = final_path.exists()
+        final_size_on_disk = final_path.stat().st_size if final_exists and final_path.is_file() else None
+
+        part_path = _task_uploads_dir(config, task_id) / f"{record.id}.part"
+        part_exists = part_path.exists()
+        part_size_on_disk = part_path.stat().st_size if part_exists and part_path.is_file() else None
+        results.append(
+            DebugFileState(
+                id=record.id,
+                relative_path=record.relative_path,
+                expected_size=record.expected_size,
+                uploaded_bytes=record.uploaded_bytes,
+                finalized=record.finalized,
+                disk_path=str(final_path),
+                disk_exists=final_exists,
+                disk_size_bytes=final_size_on_disk,
+                file_hash=record.file_hash,
+                part_path=str(part_path),
+                part_exists=part_exists,
+                part_size_bytes=part_size_on_disk,
+                final_path=str(final_path),
+                final_exists=final_exists,
+                final_size_bytes=final_size_on_disk,
+            )
+        )
+    return results
+
+
+def _build_disk_state(config: AppConfig, task_id: int) -> DebugDiskState:
+    temp_dir = _task_temp_dir(config, task_id)
+    destination_root = config.music_root / config.incoming_subdir
+    temp_size = _dir_size_bytes(temp_dir) if temp_dir.exists() else 0
+    destination_exists = destination_root.exists()
+    destination_size = _dir_size_bytes(destination_root) if destination_exists else 0
+    music_root_usage = shutil.disk_usage(config.music_root)
+    return DebugDiskState(
+        temp_dir=str(temp_dir),
+        temp_dir_exists=temp_dir.exists(),
+        temp_dir_size_bytes=temp_size,
+        destination_root=str(destination_root),
+        destination_exists=destination_exists,
+        destination_size_bytes=destination_size,
+        music_root_free_bytes=music_root_usage.free,
+        music_root_total_bytes=music_root_usage.total,
+    )
+
+
+@app.get("/api/tasks", response_model=List[TaskResponse])
+def list_tasks(db: Database = Depends(get_db)) -> List[TaskResponse]:
+    return [_task_to_response(task) for task in db.list_tasks()]
+
+
+@app.get("/api/tasks/overview", response_model=List[TaskSummaryWithEvents])
+def task_overview(db: Database = Depends(get_db)) -> List[TaskSummaryWithEvents]:
+    tasks = db.list_tasks()
+    overview: List[TaskSummaryWithEvents] = []
+    for task in tasks:
+        last_event = _task_last_event(db, task.id)
+        recent_events = _task_recent_events(db, task.id, 10)
+        overview.append(_task_to_summary(task, last_event, recent_events))
+    return overview
+
+
+@app.get("/api/tasks/{task_id}/debug", response_model=DebugTaskResponse)
+def task_debug(task_id: int, db: Database = Depends(get_db), config: AppConfig = Depends(get_config)) -> DebugTaskResponse:
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    last_event = _task_last_event(db, task_id)
+    events = _task_recent_events(db, task_id, 50)
+    files = db.list_task_files(task_id)
+    debug_files = _build_debug_files(config, task_id, files)
+    disk_state = _build_disk_state(config, task_id)
+    return DebugTaskResponse(
+        task=_task_to_response(task),
+        last_event_at=last_event.created_at if last_event else None,
+        recent_events=[_event_to_response(event) for event in events],
+        files=debug_files,
+        disk=disk_state,
+        db_path=str(db.db_path),
+        db_exists=db.db_path.exists(),
+    )
 

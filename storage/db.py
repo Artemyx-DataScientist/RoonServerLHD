@@ -86,6 +86,14 @@ class Database:
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS worker_heartbeats (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
 
     def _ensure_column(self, cursor: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
@@ -233,6 +241,26 @@ class Database:
             )
             rows = cursor.fetchall()
             return [self._row_to_event(row) for row in rows]
+
+    def list_recent_events(self, task_id: int, limit: int) -> List[TaskEventRecord]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at DESC LIMIT ?",
+                (task_id, limit),
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_event(row) for row in reversed(rows)]
+
+    def last_event(self, task_id: int) -> Optional[TaskEventRecord]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+                (task_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_event(row) if row else None
 
     def update_status(self, task_id: int, new_status: TaskStatus) -> Optional[TaskRecord]:
         task = self.get_task(task_id)
@@ -400,4 +428,28 @@ class Database:
             row = cursor.fetchone()
             pending = int(row[0]) if row else 0
             return pending == 0
+
+    def record_worker_heartbeat(self) -> datetime:
+        timestamp = datetime.now(timezone.utc)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO worker_heartbeats (id, updated_at)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                (timestamp.isoformat(),),
+            )
+            conn.commit()
+        return timestamp
+
+    def last_worker_heartbeat(self) -> Optional[datetime]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT updated_at FROM worker_heartbeats WHERE id = 1")
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return datetime.fromisoformat(row["updated_at"]).replace(tzinfo=timezone.utc)
 

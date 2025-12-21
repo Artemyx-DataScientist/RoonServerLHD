@@ -204,10 +204,13 @@ def _collect_incoming_candidates(incoming_root: Path, ttl_days: int, now: dateti
     return candidates
 
 
-def _remove_directories(directories: Iterable[Path], dry_run: bool) -> Tuple[int, int]:
+def _remove_directories(directories: Iterable[Path], base_root: Path, dry_run: bool) -> Tuple[int, int]:
     removed = 0
     freed_bytes = 0
     for directory in directories:
+        if not _is_within_base(base_root, directory):
+            logging.error("Skipping %s because it is outside of %s", directory, base_root)
+            continue
         if dry_run:
             logging.info("[dry-run] Would delete %s", directory)
             continue
@@ -264,8 +267,10 @@ def main() -> int:
     logging.info("Temp cleanup candidates: %s", [str(path) for path in temp_candidates])
     logging.info("Incoming cleanup candidates: %s", [str(path) for path in incoming_candidates])
 
-    temp_removed, temp_freed = _remove_directories(temp_candidates, settings.dry_run)
-    incoming_removed, incoming_freed = _remove_directories(incoming_candidates, settings.dry_run)
+    temp_removed, temp_freed = _remove_directories(temp_candidates, app_config.music_root, settings.dry_run)
+    incoming_removed, incoming_freed = _remove_directories(
+        incoming_candidates, app_config.music_root, settings.dry_run
+    )
 
     logging.info(
         "Cleanup complete: temp_removed=%s incoming_removed=%s freed_bytes=%s",
