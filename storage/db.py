@@ -242,6 +242,15 @@ class Database:
             rows = cursor.fetchall()
             return [self._row_to_event(row) for row in rows]
 
+    def has_event(self, task_id: int, event: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM task_events WHERE task_id = ? AND event = ? LIMIT 1",
+                (task_id, event),
+            )
+            return cursor.fetchone() is not None
+
     def list_recent_events(self, task_id: int, limit: int) -> List[TaskEventRecord]:
         with self._connect() as conn:
             cursor = conn.cursor()

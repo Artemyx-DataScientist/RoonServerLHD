@@ -416,10 +416,11 @@ def finalize_task_file(
     part_path.replace(final_path)
 
     db.finalize_task_file(file_id, current_size)
-    db.add_event(task_id, f"file_finalized:{file_id}")
-    if db.all_files_finalized(task_id):
+    file_finalized_event = f"file_finalized:{file_id}"
+    if not db.has_event(task_id, file_finalized_event):
+        db.add_event(task_id, file_finalized_event)
+    if db.all_files_finalized(task_id) and task.status != TaskStatus.READY_FOR_PROCESSING:
         db.update_status(task_id, TaskStatus.READY_FOR_PROCESSING)
-        db.add_event(task_id, "ready_for_processing")
     updated_task = db.get_task(task_id)
     assert updated_task is not None
     return _task_to_response(updated_task)
