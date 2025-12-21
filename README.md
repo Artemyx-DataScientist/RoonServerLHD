@@ -28,7 +28,7 @@ Configuration is loaded from environment variables with optional overrides from 
 | --- | --- | --- |
 | `MUSIC_ROOT` | **Required unless set in config file.** Path to existing music root. | n/a |
 | `INCOMING_SUBDIR` | Destination subdirectory under `music_root`. | `Incoming` |
-| `TEMP_SUBDIR` | Temporary working subdirectory under `music_root`. | `.temp` |
+| `TEMP_SUBDIR` | Temporary working subdirectory under `music_root`. | `.roon_uploader_tmp` |
 | `MAX_TASK_SIZE_BYTES` | Maximum total registered bytes per task. | `10737418240` (10 GiB) |
 | `MAX_CHUNK_BYTES` | Maximum accepted chunk size. | `5242880` (5 MiB) |
 | `ALLOWLIST` | Comma-separated allowlist (extensions). | empty list |
