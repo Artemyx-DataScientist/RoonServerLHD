@@ -38,6 +38,11 @@ class MountUnavailableError(RuntimeError):
         self.mount_path = mount_path
 
 
+class TaskNotReadyError(RuntimeError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 @dataclass
 class FileOutcome:
     record: Optional[TaskFileRecord]
@@ -383,7 +388,7 @@ def _load_candidate_files(
     unfinalized = [record for record in records if not record.finalized]
     if unfinalized:
         pending = ", ".join(record.relative_path for record in unfinalized)
-        raise RuntimeError(f"Not all files finalized: {pending}")
+        raise TaskNotReadyError(f"Not all files finalized: {pending}")
 
     outcomes: List[FileOutcome] = []
     password = str(task.context.get("password")) if task.context.get("password") else None
@@ -520,6 +525,9 @@ def main() -> None:
                         db.add_event(task.id, "queued")
                     _process_task(db, config, task)
                     db.add_event(task.id, "worker_finished")
+                except TaskNotReadyError as exc:
+                    logger.info("Task %s is waiting for finalization: %s", task.id, exc)
+                    db.add_event(task.id, "waiting_for_finalize")
                 except MountUnavailableError as exc:
                     logger.exception("Mount unavailable for task %s", task.id)
                     db.add_event(task.id, "mount_unavailable")
