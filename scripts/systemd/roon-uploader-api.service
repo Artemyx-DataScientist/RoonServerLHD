@@ -1,0 +1,17 @@
+[Unit]
+Description=Roon Helper API Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=roonhelper
+Group=roonhelper
+WorkingDirectory=/opt/roonhelper/current
+EnvironmentFile=-/etc/roonhelper/roonhelper.env
+ExecStart=/opt/roonhelper/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

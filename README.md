@@ -54,19 +54,85 @@ The worker keeps a process alive for system integration:
 MUSIC_ROOT=/mnt/music python -m worker.main
 ```
 
-## Systemd units
-Sample units live in `scripts/systemd/`:
-- `roon-api.service` starts `uvicorn app.main:app` with `WorkingDirectory=%h/RoonServerLHD`.
-- `roon-worker.service` starts the worker stub.
+## Deployment layout
+The production layout is designed for atomic releases and easy rollback:
 
-Install example (adjust the working directory to your checkout path):
-```bash
-sudo install -m 644 scripts/systemd/roon-api.service /etc/systemd/system/
-sudo install -m 644 scripts/systemd/roon-worker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now roon-api.service roon-worker.service
 ```
-Use `/etc/roonhelper.env` to provide environment overrides for both units.
+/opt/roonhelper/
+  ├── releases/
+  │    ├── 2025-01-01_1200/
+  │    └── ...
+  ├── current -> releases/2025-01-01_1200
+  ├── shared/
+  │    ├── config.yaml
+  │    └── storage/
+  └── venv/
+```
+
+- `releases/` holds timestamped checkouts (no in-place edits).
+- `current` is a symlink to the active release. Switching the symlink is atomic and does not affect already running processes.
+- `shared/` contains configuration and persistent data (e.g., `storage/app.db`) that must survive restarts and upgrades.
+- `venv/` hosts the Python virtual environment shared by both services.
+
+## Preparing the host
+1. Create a dedicated system user and prepare paths:
+   ```bash
+   sudo useradd --system --home /opt/roonhelper --shell /usr/sbin/nologin roonhelper
+   sudo mkdir -p /opt/roonhelper/releases /opt/roonhelper/shared/storage
+   sudo chown -R roonhelper:roonhelper /opt/roonhelper
+   sudo python3 -m venv /opt/roonhelper/venv
+   sudo /opt/roonhelper/venv/bin/pip install --upgrade pip
+   ```
+2. Populate `/opt/roonhelper/shared/config.yaml` (copy `config.example.yaml` as a starting point) and point `db_path` to `/opt/roonhelper/shared/storage/app.db`.
+3. Copy `scripts/roonhelper.env.example` to `/etc/roonhelper/roonhelper.env` and update values (`MUSIC_ROOT`, `CONFIG_FILE=/opt/roonhelper/shared/config.yaml`, `DB_PATH=/opt/roonhelper/shared/storage/app.db`, etc.).
+
+## systemd units
+Sample units live in `scripts/systemd/`:
+- `roon-uploader-api.service` runs `uvicorn app.main:app`.
+- `roon-uploader-worker.service` runs the worker and waits for the API to be up.
+
+Install and enable the services:
+```bash
+sudo install -m 644 scripts/systemd/roon-uploader-api.service /etc/systemd/system/
+sudo install -m 644 scripts/systemd/roon-uploader-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now roon-uploader-api.service roon-uploader-worker.service
+```
+
+The worker waits for the API port (127.0.0.1:8000) before starting; ensure `nc` (netcat) is installed (e.g., `sudo apt-get install netcat-openbsd`).
+
+Both units load `/etc/roonhelper/roonhelper.env` for environment overrides and log to journald. Check status/logs with:
+```bash
+systemctl status roon-uploader-api.service roon-uploader-worker.service
+journalctl -u roon-uploader-api.service -u roon-uploader-worker.service -f
+```
+
+## Updating without downtime
+1. Prepare a new release directory:
+   ```bash
+   ts=$(date +%Y-%m-%d_%H%M)
+   REPO_URL=<git URL for this project>
+   sudo git clone "$REPO_URL" /opt/roonhelper/releases/$ts
+   sudo /opt/roonhelper/venv/bin/pip install -r /opt/roonhelper/releases/$ts/requirements.txt
+   ```
+2. Point `current` to the new release atomically:
+   ```bash
+   sudo ln -sfn /opt/roonhelper/releases/$ts /opt/roonhelper/current
+   ```
+3. Restart services to pick up the new code (running processes continue using the old release until restart):
+   ```bash
+   sudo systemctl restart roon-uploader-api.service roon-uploader-worker.service
+   ```
+
+## Rollback
+1. List available releases under `/opt/roonhelper/releases/` and pick a known-good timestamp.
+2. Point `current` back to that directory:
+   ```bash
+   sudo ln -sfn /opt/roonhelper/releases/2025-01-01_1200 /opt/roonhelper/current
+   sudo systemctl restart roon-uploader-api.service roon-uploader-worker.service
+   ```
+
+Because data and config live under `/opt/roonhelper/shared/`, switching releases and restarting does not drop active tasks or database state.
 
 ## Database schema
 SQLite tables initialized on startup:

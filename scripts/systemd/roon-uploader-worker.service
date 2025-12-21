@@ -1,0 +1,19 @@
+[Unit]
+Description=Roon Helper Worker Service
+After=network-online.target roon-uploader-api.service
+Wants=network-online.target
+Requires=roon-uploader-api.service
+
+[Service]
+Type=simple
+User=roonhelper
+Group=roonhelper
+WorkingDirectory=/opt/roonhelper/current
+EnvironmentFile=-/etc/roonhelper/roonhelper.env
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do nc -z 127.0.0.1 8000 && exit 0; sleep 1; done; exit 1'
+ExecStart=/opt/roonhelper/venv/bin/python -m worker.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

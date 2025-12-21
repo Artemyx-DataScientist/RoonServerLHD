@@ -9,4 +9,4 @@ allowlist:
   - mp3
 cleanup_days: 30
 mount_validation_mode: strict
-# db_path: storage/app.db
+# db_path: /opt/roonhelper/shared/storage/app.db
