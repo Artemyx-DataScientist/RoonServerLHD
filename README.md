@@ -136,10 +136,11 @@ Because data and config live under `/opt/roonhelper/shared/`, switching releases
 
 ## Database schema
 SQLite tables initialized on startup:
-- `tasks`: id, name, status, created_at, updated_at, cleanup_after
+- `tasks`: id, name, status, created_at, updated_at, cleanup_after, context
 - `task_files`: id, task_id, relative_path, original_name, expected_size, uploaded_bytes, finalized, size_bytes, created_at, updated_at
 - `known_hashes`: id, file_hash (unique), first_seen_task_id, created_at
 - `task_events`: id, task_id, event, created_at
+- `worker_heartbeats`: id (always 1), updated_at
 
 ## Pre-commit check for docs
 Run the UTF-8/NUL check before committing documentation changes:
