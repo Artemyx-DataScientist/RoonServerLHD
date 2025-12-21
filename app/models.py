@@ -26,7 +26,11 @@ class TaskStatus(str, Enum):
 _ALLOWED_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
     TaskStatus.CREATED: [TaskStatus.UPLOADING, TaskStatus.CANCELLED],
     TaskStatus.UPLOADING: [TaskStatus.READY_FOR_PROCESSING, TaskStatus.CANCELLED],
-    TaskStatus.READY_FOR_PROCESSING: [TaskStatus.PROCESSING, TaskStatus.CANCELLED],
+    TaskStatus.READY_FOR_PROCESSING: [
+        TaskStatus.PROCESSING,
+        TaskStatus.CANCELLED,
+        TaskStatus.UPLOADING,
+    ],
     TaskStatus.PROCESSING: [
         TaskStatus.NEED_PASSWORD,
         TaskStatus.NEED_TAGS,
