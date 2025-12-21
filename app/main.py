@@ -18,6 +18,7 @@ from app.models import (
     TaskEventRecord,
     TaskFileCreateRequest,
     TaskFileCreateResponse,
+    TaskFileRecord,
     TaskPasswordRequest,
     TaskRecord,
     TaskResponse,
@@ -56,6 +57,45 @@ def _validate_relative_path(relative_path: str) -> str:
     if path_obj.is_absolute() or any(part == ".." for part in path_obj.parts):
         raise HTTPException(status_code=400, detail="Invalid relative_path")
     return normalized
+
+
+def _part_file_path(config: AppConfig, task_id: int, file_id: int) -> Path:
+    return _task_uploads_dir(config, task_id) / f"{file_id}.part"
+
+
+def _sync_part_file_state(
+    *,
+    config: AppConfig,
+    task_id: int,
+    file_record: TaskFileRecord,
+    db: Database,
+    require_presence: bool = False,
+) -> tuple[TaskFileRecord, Path, int]:
+    part_path = _part_file_path(config, task_id, file_record.id)
+    part_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if part_path.exists():
+        current_size = part_path.stat().st_size
+        if current_size > file_record.expected_size:
+            raise HTTPException(status_code=400, detail="Uploaded data exceeds expected size on disk")
+        if current_size != file_record.uploaded_bytes:
+            db.update_task_file_progress(file_record.id, current_size)
+            refreshed = db.get_task_file(file_record.id)
+            assert refreshed is not None
+            file_record = refreshed
+        return file_record, part_path, current_size
+
+    if file_record.uploaded_bytes > 0:
+        raise HTTPException(status_code=400, detail="Recorded upload progress missing on disk")
+    if require_presence:
+        raise HTTPException(status_code=400, detail="No uploaded data for file")
+    return file_record, part_path, 0
+
+
+def _read_existing_bytes(part_path: Path, offset: int, length: int) -> bytes:
+    with part_path.open("rb") as handle:
+        handle.seek(offset)
+        return handle.read(length)
 
 
 def _read_tag_fields(file_path: Path, display_path: Optional[str] = None) -> TrackTag:
@@ -266,7 +306,7 @@ async def upload_task_file_chunk(
     if not file_record or file_record.task_id != task_id:
         raise HTTPException(status_code=404, detail="File not found")
     if file_record.finalized:
-        raise HTTPException(status_code=400, detail="File already finalized")
+        raise HTTPException(status_code=409, detail="File already finalized")
 
     content_range = request.headers.get("Content-Range")
     start, end, total = _parse_content_range(content_range)
@@ -281,14 +321,26 @@ async def upload_task_file_chunk(
     if start + chunk_length > file_record.expected_size:
         raise HTTPException(status_code=400, detail="Chunk exceeds registered file size")
 
-    part_path = _task_uploads_dir(config, task_id) / f"{file_id}.part"
-    part_path.parent.mkdir(parents=True, exist_ok=True)
-    current_size = part_path.stat().st_size if part_path.exists() else 0
+    file_record, part_path, current_size = _sync_part_file_state(
+        config=config, task_id=task_id, file_record=file_record, db=db
+    )
 
-    if current_size > file_record.expected_size:
-        raise HTTPException(status_code=400, detail="Uploaded data exceeds expected size")
     if start < current_size:
-        return ChunkUploadResponse(next_offset=current_size, complete=current_size >= file_record.expected_size)
+        if end < current_size:
+            existing = _read_existing_bytes(part_path, start, chunk_length)
+            if existing != body:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Chunk content mismatch at offset {start}. Resume from {current_size}",
+                )
+            return ChunkUploadResponse(
+                next_offset=current_size, complete=current_size >= file_record.expected_size
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Chunk overlaps existing data. Resume from {current_size}",
+        )
+
     if start != current_size:
         raise HTTPException(status_code=409, detail=f"Mismatched offset. Resume from {current_size}")
 
@@ -297,6 +349,8 @@ async def upload_task_file_chunk(
         handle.write(body)
 
     new_size = part_path.stat().st_size
+    if new_size > file_record.expected_size:
+        raise HTTPException(status_code=400, detail="Uploaded data exceeds expected size")
     db.update_task_file_progress(file_id, new_size)
     if task.status == TaskStatus.CREATED:
         db.update_status(task_id, TaskStatus.UPLOADING)
@@ -316,16 +370,27 @@ def finalize_task_file(
     if not file_record or file_record.task_id != task_id:
         raise HTTPException(status_code=404, detail="File not found")
     if file_record.finalized:
-        return _task_to_response(task)
+        final_path = _task_temp_dir(config, task_id) / file_record.relative_path
+        if not final_path.exists():
+            raise HTTPException(status_code=400, detail="Finalized file missing on disk")
+        raise HTTPException(status_code=409, detail="File already finalized")
 
-    part_path = _task_uploads_dir(config, task_id) / f"{file_id}.part"
-    if not part_path.exists():
-        raise HTTPException(status_code=400, detail="No uploaded data for file")
-    current_size = part_path.stat().st_size
+    file_record, part_path, current_size = _sync_part_file_state(
+        config=config, task_id=task_id, file_record=file_record, db=db, require_presence=True
+    )
     if current_size != file_record.expected_size:
-        raise HTTPException(status_code=400, detail="Uploaded size does not match expected")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Incomplete upload: "
+                f"uploaded {current_size} of expected {file_record.expected_size} bytes"
+            ),
+        )
 
     final_path = _task_temp_dir(config, task_id) / file_record.relative_path
+    if final_path.exists():
+        raise HTTPException(status_code=409, detail="Target file already exists")
+
     final_path.parent.mkdir(parents=True, exist_ok=True)
     part_path.replace(final_path)
 
