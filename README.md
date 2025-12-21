@@ -35,6 +35,7 @@ Configuration is loaded from environment variables with optional overrides from 
 | `CLEANUP_DAYS` | Days until cleanup marker. | `30` |
 | `MOUNT_VALIDATION_MODE` | `strict` or `relaxed`. | `strict` |
 | `CONFIG_FILE` | Optional path to YAML/JSON config. | `./config.yaml` if present |
+| `DB_PATH` | Path to SQLite database (`AppConfig.db_path`). | `storage/app.db` |
 
 Config file keys mirror the environment variables. Example `config.example.yaml` is included.
 
