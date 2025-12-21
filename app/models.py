@@ -110,6 +110,16 @@ class TaskEventResponse(BaseModel):
     created_at: datetime
 
 
+class TaskSummaryResponse(TaskResponse):
+    last_event_at: Optional[datetime]
+
+
+class TaskSummaryWithEvents(BaseModel):
+    task: TaskSummaryResponse
+    recent_events: List[TaskEventResponse]
+    is_stuck: bool
+
+
 class TaskFileCreateRequest(BaseModel):
     relative_path: str
     size_bytes: int = Field(..., gt=0)
@@ -147,6 +157,45 @@ class TaskTagsUpdateRequest(BaseModel):
     batch_artist: Optional[str] = None
     batch_album: Optional[str] = None
     batch_year: Optional[str] = None
+
+
+class DebugFileState(BaseModel):
+    id: int
+    relative_path: str
+    expected_size: int
+    uploaded_bytes: int
+    finalized: bool
+    disk_path: str
+    disk_exists: bool
+    disk_size_bytes: Optional[int]
+    file_hash: Optional[str]
+    part_path: str
+    part_exists: bool
+    part_size_bytes: Optional[int]
+    final_path: str
+    final_exists: bool
+    final_size_bytes: Optional[int]
+
+
+class DebugDiskState(BaseModel):
+    temp_dir: str
+    temp_dir_exists: bool
+    temp_dir_size_bytes: int
+    destination_root: str
+    destination_exists: bool
+    destination_size_bytes: int
+    music_root_free_bytes: int
+    music_root_total_bytes: int
+
+
+class DebugTaskResponse(BaseModel):
+    task: TaskResponse
+    last_event_at: Optional[datetime]
+    recent_events: List[TaskEventResponse]
+    files: List[DebugFileState]
+    disk: DebugDiskState
+    db_path: str
+    db_exists: bool
 
 
 class SettingsResponse(BaseModel):

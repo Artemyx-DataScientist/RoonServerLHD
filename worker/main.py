@@ -507,6 +507,7 @@ def main() -> None:
     )
     try:
         while True:
+            db.record_worker_heartbeat()
             pending = db.list_tasks_by_status({TaskStatus.PROCESSING, TaskStatus.READY_FOR_PROCESSING})
             for task in pending:
                 if task.status not in {TaskStatus.PROCESSING, TaskStatus.READY_FOR_PROCESSING}:
