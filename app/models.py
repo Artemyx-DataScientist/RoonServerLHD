@@ -105,6 +105,8 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     cleanup_after: Optional[datetime]
+    status_detail: Optional[str] = None
+    status_reasons: List[str] = Field(default_factory=list)
 
 
 class TaskEventResponse(BaseModel):
@@ -206,6 +208,8 @@ class SettingsResponse(BaseModel):
     music_root: str
     incoming_subdir: str
     temp_subdir: str
+    max_task_size_bytes: int
+    max_chunk_bytes: int
     allowlist: List[str]
     cleanup_days: int
     mount_validation_mode: str
@@ -216,6 +220,8 @@ class SettingsUpdateRequest(BaseModel):
     music_root: Optional[str] = None
     incoming_subdir: Optional[str] = None
     temp_subdir: Optional[str] = None
+    max_task_size_bytes: Optional[int] = Field(default=None, gt=0)
+    max_chunk_bytes: Optional[int] = Field(default=None, gt=0)
     allowlist: Optional[List[str]] = None
     cleanup_days: Optional[int] = None
     mount_validation_mode: Optional[str] = None

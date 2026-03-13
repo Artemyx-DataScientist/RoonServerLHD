@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional
 
 import shutil
@@ -59,13 +59,13 @@ def _task_uploads_dir(config: AppConfig, task_id: int) -> Path:
 
 
 def _validate_relative_path(relative_path: str) -> str:
-    normalized = relative_path.strip()
+    normalized = relative_path.strip().replace("\\", "/")
     if not normalized:
         raise HTTPException(status_code=400, detail="relative_path is required")
-    path_obj = Path(normalized)
+    path_obj = PurePosixPath(normalized)
     if path_obj.is_absolute() or any(part == ".." for part in path_obj.parts):
         raise HTTPException(status_code=400, detail="Invalid relative_path")
-    return normalized
+    return path_obj.as_posix()
 
 
 def _part_file_path(config: AppConfig, task_id: int, file_id: int) -> Path:
@@ -151,7 +151,41 @@ def get_db(request: Request) -> Database:
     return database
 
 
+def _task_status_reasons(task_record: TaskRecord) -> List[str]:
+    reasons: List[str] = []
+    context = task_record.context or {}
+    password_for = context.get("password_for")
+    if task_record.status == TaskStatus.NEED_PASSWORD and password_for:
+        reasons.append(f"Password required for {password_for}")
+
+    pending_tags = _task_pending_tags(task_record)
+    if task_record.status == TaskStatus.NEED_TAGS and pending_tags:
+        reasons.append(f"Tag review required for {len(pending_tags)} track(s)")
+
+    raw_file_statuses = context.get("file_statuses")
+    if isinstance(raw_file_statuses, dict):
+        for relative_path, payload in sorted(raw_file_statuses.items()):
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status", "")).upper()
+            reason = str(payload.get("reason", "")).strip()
+            if status == "DUPLICATE":
+                reasons.append(f"{relative_path}: duplicate")
+            elif status == "SKIPPED":
+                if reason:
+                    reasons.append(f"{relative_path}: skipped ({reason})")
+                else:
+                    reasons.append(f"{relative_path}: skipped")
+
+    error_message = context.get("error_message")
+    if error_message:
+        reasons.append(f"Error: {error_message}")
+
+    return reasons
+
+
 def _task_to_response(task_record: TaskRecord) -> TaskResponse:
+    status_reasons = _task_status_reasons(task_record)
     return TaskResponse(
         id=task_record.id,
         name=task_record.name,
@@ -159,6 +193,8 @@ def _task_to_response(task_record: TaskRecord) -> TaskResponse:
         created_at=task_record.created_at,
         updated_at=task_record.updated_at,
         cleanup_after=task_record.cleanup_after,
+        status_detail=status_reasons[0] if status_reasons else None,
+        status_reasons=status_reasons,
     )
 
 
@@ -175,9 +211,14 @@ def _event_to_response(event_record: TaskEventRecord) -> TaskEventResponse:
 def read_root(request: Request, db: Database = Depends(get_db)) -> HTMLResponse:
     tasks = [jsonable_encoder(_task_to_response(t)) for t in db.list_tasks()]
     return templates.TemplateResponse(
-    "index.html",
-    {"request": request, "tasks": tasks},
-)
+        "index.html",
+        {"request": request, "tasks": tasks},
+    )
+
+
+@app.get("/api/tasks", response_model=List[TaskResponse])
+def list_tasks(db: Database = Depends(get_db)) -> List[TaskResponse]:
+    return [_task_to_response(task) for task in db.list_tasks()]
 
 
 @app.post("/api/tasks", response_model=TaskResponse)
@@ -229,16 +270,16 @@ def update_settings(
     request: SettingsUpdateRequest,
     app_config: AppConfig = Depends(get_config),
 ) -> SettingsResponse:
-    updates: Dict[str, str] = {
-        key: value
-        for key, value in request.dict().items()
-        if value is not None
-    }
+    updates: Dict[str, object] = request.model_dump(exclude_none=True)
     try:
         new_config = update_config(app_config, updates)
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     app.state.config = new_config
+    if new_config.db_path != app_config.db_path:
+        database = Database(new_config.db_path)
+        database.initialize()
+        app.state.db = database
     return SettingsResponse(**new_config.as_dict())
 
 
@@ -309,12 +350,15 @@ def register_task_file(
 
     uploads_dir = _task_uploads_dir(config, task_id)
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    file_record = db.create_task_file(
-        task_id=task_id,
-        relative_path=relative_path,
-        original_name=payload.original_name or Path(relative_path).name,
-        expected_size=payload.size_bytes,
-    )
+    try:
+        file_record = db.create_task_file(
+            task_id=task_id,
+            relative_path=relative_path,
+            original_name=payload.original_name or Path(relative_path).name,
+            expected_size=payload.size_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     part_path = uploads_dir / f"{file_record.id}.part"
     part_path.touch(exist_ok=True)
 
@@ -462,7 +506,12 @@ def _task_pending_tags(task: TaskRecord) -> List[Dict[str, str]]:
         source = entry.get("source") if isinstance(entry, dict) else None
         relative_output = entry.get("relative_output") if isinstance(entry, dict) else None
         if source and relative_output:
-            normalized.append({"source": str(source), "relative_output": str(relative_output)})
+            normalized.append(
+                {
+                    "source": PurePosixPath(str(source).replace("\\", "/")).as_posix(),
+                    "relative_output": PurePosixPath(str(relative_output).replace("\\", "/")).as_posix(),
+                }
+            )
     return normalized
 
 
@@ -663,11 +712,6 @@ def _build_disk_state(config: AppConfig, task_id: int) -> DebugDiskState:
     )
 
 
-@app.get("/api/tasks", response_model=List[TaskResponse])
-def list_tasks(db: Database = Depends(get_db)) -> List[TaskResponse]:
-    return [_task_to_response(task) for task in db.list_tasks()]
-
-
 @app.get("/api/tasks/overview", response_model=List[TaskSummaryWithEvents])
 def task_overview(db: Database = Depends(get_db)) -> List[TaskSummaryWithEvents]:
     tasks = db.list_tasks()
@@ -698,4 +742,3 @@ def task_debug(task_id: int, db: Database = Depends(get_db), config: AppConfig =
         db_path=str(db.db_path),
         db_exists=db.db_path.exists(),
     )
-

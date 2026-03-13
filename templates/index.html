@@ -1,84 +1,800 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Roon Helper Tasks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roon Helper Upload Console</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 2rem; }
-        form { margin-bottom: 1.5rem; }
-        table { border-collapse: collapse; width: 100%; max-width: 800px; }
-        th, td { border: 1px solid #ccc; padding: 0.5rem; text-align: left; }
-        th { background: #f2f2f2; }
-        .actions { margin-top: 2rem; }
-        .hidden { display: none; }
-        .tag-editor { border: 1px solid #ccc; padding: 1rem; margin-top: 1rem; }
-        .batch-controls { margin-bottom: 0.75rem; }
-        .badge { padding: 0.2rem 0.5rem; border-radius: 0.3rem; background: #eef; }
-        .status-ok { background: #e6ffed; color: #0b6b2f; }
-        .status-error { background: #ffe6e6; color: #8c1a1a; }
-        .status-warning { background: #fff6e6; color: #8c5a00; }
-        .event-log { font-size: 0.9rem; line-height: 1.3; }
-        .stuck { border-left: 4px solid #ffb347; }
-        .section-card { border: 1px solid #ddd; padding: 1rem; margin-top: 1rem; border-radius: 0.3rem; }
+        :root {
+            --bg: #f4efe6;
+            --panel: rgba(255, 250, 242, 0.92);
+            --panel-strong: #fffdf8;
+            --ink: #1f2a2a;
+            --muted: #5f6b6b;
+            --line: rgba(57, 73, 73, 0.12);
+            --accent: #c76739;
+            --accent-deep: #8f4120;
+            --accent-soft: rgba(199, 103, 57, 0.12);
+            --success: #2f6a47;
+            --success-soft: rgba(47, 106, 71, 0.12);
+            --warning: #8b5e1d;
+            --warning-soft: rgba(139, 94, 29, 0.12);
+            --danger: #9c2f2f;
+            --danger-soft: rgba(156, 47, 47, 0.12);
+            --shadow: 0 18px 50px rgba(69, 52, 35, 0.12);
+            --radius: 22px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(199, 103, 57, 0.16), transparent 28%),
+                radial-gradient(circle at top right, rgba(47, 106, 71, 0.1), transparent 22%),
+                linear-gradient(180deg, #f7f1e7 0%, var(--bg) 52%, #efe5d7 100%);
+        }
+
+        .shell {
+            width: min(1400px, calc(100% - 32px));
+            margin: 24px auto 40px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 2.2fr 1fr;
+            gap: 18px;
+            margin-bottom: 22px;
+        }
+
+        .hero-panel,
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+
+        .hero-panel {
+            padding: 28px 28px 24px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-panel::after {
+            content: "";
+            position: absolute;
+            inset: auto -40px -60px auto;
+            width: 180px;
+            height: 180px;
+            background: radial-gradient(circle, rgba(199, 103, 57, 0.18), transparent 72%);
+            transform: rotate(12deg);
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-deep);
+            font-size: 0.84rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        h1, h2, h3 {
+            margin: 0;
+        }
+
+        .hero h1 {
+            margin-top: 14px;
+            max-width: 700px;
+            font-size: clamp(2rem, 4vw, 3.3rem);
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+        }
+
+        .hero-copy {
+            margin-top: 14px;
+            max-width: 720px;
+            color: var(--muted);
+            font-size: 1rem;
+            line-height: 1.55;
+        }
+
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 22px;
+        }
+
+        .stat-card {
+            padding: 16px 18px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.62);
+            border: 1px solid rgba(57, 73, 73, 0.08);
+        }
+
+        .stat-card strong {
+            display: block;
+            font-size: 1.7rem;
+            letter-spacing: -0.04em;
+        }
+
+        .stat-card span {
+            display: block;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .hero-side {
+            padding: 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .stack-label {
+            color: var(--muted);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .status-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.64);
+            border: 1px solid rgba(57, 73, 73, 0.08);
+            color: var(--muted);
+        }
+
+        .status-row strong {
+            color: var(--ink);
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1.6fr);
+            gap: 18px;
+            align-items: start;
+        }
+
+        .panel {
+            padding: 22px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .panel-header p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        form {
+            display: grid;
+            gap: 14px;
+        }
+
+        .field-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .field-grid.dual {
+            grid-template-columns: 1.5fr 0.8fr;
+        }
+
+        label {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        input,
+        select,
+        button {
+            font: inherit;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 13px 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(57, 73, 73, 0.18);
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ink);
+        }
+
+        input:focus,
+        select:focus {
+            outline: 2px solid rgba(199, 103, 57, 0.24);
+            border-color: rgba(199, 103, 57, 0.3);
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .btn {
+            border: 0;
+            border-radius: 999px;
+            padding: 12px 18px;
+            cursor: pointer;
+            transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.58;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent) 0%, #df8a57 100%);
+            color: #fff8f1;
+            box-shadow: 0 10px 24px rgba(199, 103, 57, 0.22);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.8);
+            color: var(--ink);
+            border: 1px solid rgba(57, 73, 73, 0.12);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--accent-deep);
+            border: 1px dashed rgba(199, 103, 57, 0.4);
+        }
+
+        .selection-summary,
+        .upload-summary {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        .summary-chip {
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(57, 73, 73, 0.08);
+        }
+
+        .summary-chip strong {
+            display: block;
+            font-size: 1.2rem;
+        }
+
+        .summary-chip span {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .upload-session {
+            display: grid;
+            gap: 16px;
+        }
+
+        .headline-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .mini-note {
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .progress-shell {
+            width: 100%;
+            height: 12px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(95, 107, 107, 0.12);
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--accent) 0%, #e09d60 100%);
+            transition: width 160ms ease;
+        }
+
+        .queue-list {
+            display: grid;
+            gap: 10px;
+            max-height: 560px;
+            overflow: auto;
+            padding-right: 6px;
+        }
+
+        .queue-item,
+        .task-card,
+        .action-card {
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid rgba(57, 73, 73, 0.08);
+            border-radius: 18px;
+        }
+
+        .queue-item {
+            padding: 14px 16px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .queue-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .queue-title {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+        }
+
+        .queue-title strong,
+        .task-card h3 {
+            font-size: 1rem;
+        }
+
+        .queue-title span,
+        .task-meta,
+        .task-reasons,
+        .action-card p {
+            color: var(--muted);
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+
+        .queue-title span,
+        .task-card h3 {
+            overflow-wrap: anywhere;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 90px;
+            padding: 6px 11px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .pill-queued,
+        .pill-registering,
+        .pill-uploading,
+        .pill-finalizing,
+        .pill-processing,
+        .pill-created,
+        .pill-updating {
+            background: var(--accent-soft);
+            color: var(--accent-deep);
+        }
+
+        .pill-done,
+        .pill-ready_for_processing,
+        .pill-completed,
+        .pill-success {
+            background: var(--success-soft);
+            color: var(--success);
+        }
+
+        .pill-need_password,
+        .pill-need_tags,
+        .pill-warning,
+        .pill-done_with_duplicates {
+            background: var(--warning-soft);
+            color: var(--warning);
+        }
+
+        .pill-error,
+        .pill-failed,
+        .pill-cancelled,
+        .pill-stopped {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .queue-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        .queue-error {
+            color: var(--danger);
+            background: var(--danger-soft);
+            border-radius: 12px;
+            padding: 8px 10px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .queue-error.visible {
+            display: block;
+        }
+
+        .task-grid,
+        .action-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .task-grid {
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+
+        .task-card {
+            padding: 16px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .task-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+        }
+
+        .task-meta strong {
+            color: var(--ink);
+        }
+
+        .task-reasons ul {
+            margin: 6px 0 0;
+            padding-left: 18px;
+        }
+
+        .empty-state {
+            padding: 18px;
+            border-radius: 18px;
+            color: var(--muted);
+            background: rgba(255, 255, 255, 0.58);
+            border: 1px dashed rgba(57, 73, 73, 0.16);
+        }
+
+        .actions {
+            margin-top: 18px;
+            display: grid;
+            gap: 18px;
+        }
+
+        .action-grid {
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+
+        .action-card {
+            padding: 16px;
+            display: grid;
+            gap: 12px;
+        }
+
+        .tag-editor {
+            margin-top: 18px;
+            padding: 18px;
+            border-radius: 20px;
+            border: 1px solid rgba(57, 73, 73, 0.1);
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .batch-controls {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin: 14px 0 16px;
+        }
+
+        .tag-table-wrap {
+            overflow: auto;
+            border: 1px solid rgba(57, 73, 73, 0.08);
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 12px;
+            border-bottom: 1px solid rgba(57, 73, 73, 0.08);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            font-size: 0.84rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+        }
+
+        @media (max-width: 1060px) {
+            .hero,
+            .layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .shell {
+                width: min(100% - 20px, 100%);
+                margin: 14px auto 28px;
+            }
+
+            .hero-panel,
+            .panel {
+                padding: 18px;
+            }
+
+            .field-grid.dual,
+            .hero-stats,
+            .selection-summary,
+            .upload-summary,
+            .batch-controls {
+                grid-template-columns: 1fr;
+            }
+
+            .queue-top,
+            .headline-row,
+            .task-top {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>Resumable Upload Demo</h1>
-    <form id="create-task">
-        <label for="name">Task name:</label>
-        <input id="name" name="name" required>
-        <label for="file-input">Files:</label>
-        <input id="file-input" type="file" webkitdirectory directory multiple required>
-        <button type="submit">Create & Upload</button>
-    </form>
-
-    <section>
-        <h2>Existing tasks</h2>
-        <div id="health" class="section-card"></div>
-        <div class="section-card">
-            <h3>Мониторинг задач</h3>
-            <table>
-                <thead>
-                    <tr><th>ID</th><th>Name</th><th>Status</th><th>Last event</th><th>Last event at</th><th>Recent events</th><th>Debug</th></tr>
-                </thead>
-                <tbody id="overview-body"></tbody>
-            </table>
-        </div>
-    </section>
-
-    <section>
-        <h2>Uploads</h2>
-        <div id="uploads"></div>
-    </section>
-
-    <section class="actions">
-        <h2>Actions</h2>
-        <div id="password-actions"></div>
-        <div id="tag-actions"></div>
-        <div id="tag-editor" class="tag-editor hidden">
-            <h3>Правка тегов для задачи <span id="tag-task-id"></span></h3>
-            <div class="batch-controls">
-                <label>Batch Artist: <input id="batch-artist"></label>
-                <label>Batch Album: <input id="batch-album"></label>
-                <label>Batch Year: <input id="batch-year"></label>
-                <button id="apply-batch" type="button">Применить к таблице</button>
+    <div class="shell">
+        <section class="hero">
+            <div class="hero-panel">
+                <span class="eyebrow">Linux upload console</span>
+                <h1>Надежная отправка больших музыкальных пакетов без ручной нервотрепки</h1>
+                <p class="hero-copy">
+                    Интерфейс держит очередь файлов, повторяет нестабильные сетевые шаги, не валит всю пачку из-за одного сбоя
+                    и показывает, что происходит с задачами на сервере прямо во время обработки.
+                </p>
+                <div class="hero-stats">
+                    <div class="stat-card">
+                        <strong id="hero-total-tasks">{{ tasks|length }}</strong>
+                        <span>Всего задач в системе</span>
+                    </div>
+                    <div class="stat-card">
+                        <strong id="hero-attention-count">0</strong>
+                        <span>Требуют действий</span>
+                    </div>
+                    <div class="stat-card">
+                        <strong id="hero-uploaded-files">0</strong>
+                        <span>Файлов завершено в текущей сессии</span>
+                    </div>
+                    <div class="stat-card">
+                        <strong id="hero-failed-files">0</strong>
+                        <span>Ошибок в текущей сессии</span>
+                    </div>
+                </div>
             </div>
-            <table id="tag-table">
-                <thead>
-                    <tr><th>Путь</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th></tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-            <div style="margin-top: 0.75rem;">
-                <button id="submit-tags" type="button">Сохранить теги</button>
-                <button id="cancel-tags" type="button">Отмена</button>
-            </div>
+            <aside class="hero-side hero-panel">
+                <div>
+                    <div class="stack-label">Состояние сервиса</div>
+                    <div class="status-list" id="hero-status-list"></div>
+                </div>
+                <div>
+                    <div class="stack-label">Автообновление</div>
+                    <div class="status-row">
+                        <span>Задачи обновляются каждые 5 секунд</span>
+                        <strong id="refresh-indicator">online</strong>
+                    </div>
+                </div>
+            </aside>
+        </section>
+
+        <div class="layout">
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Новая отправка</h2>
+                        <p>Выберите папку, задайте имя задачи и держите под контролем всю пачку, а не только один файл.</p>
+                    </div>
+                </div>
+
+                <form id="create-task">
+                    <div class="field-grid dual">
+                        <label>
+                            Название задачи
+                            <input id="name" name="name" placeholder="Например: Jazz imports March" required>
+                        </label>
+                        <label>
+                            Параллельных загрузок
+                            <select id="parallel-count">
+                                <option value="2">2</option>
+                                <option value="3" selected>3</option>
+                                <option value="4">4</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <label>
+                        Папка с файлами
+                        <input id="file-input" type="file" webkitdirectory directory multiple required>
+                    </label>
+
+                    <div class="selection-summary" id="selection-summary">
+                        <div class="summary-chip">
+                            <strong id="selection-files">0</strong>
+                            <span>выбрано файлов</span>
+                        </div>
+                        <div class="summary-chip">
+                            <strong id="selection-total-size">0 B</strong>
+                            <span>общий объем</span>
+                        </div>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="btn btn-primary" id="start-upload" type="submit">Создать задачу и начать отправку</button>
+                        <button class="btn btn-secondary" id="stop-upload" type="button" disabled>Остановить после текущих запросов</button>
+                        <button class="btn btn-ghost" id="retry-failed" type="button" disabled>Повторить оставшиеся и неудачные</button>
+                    </div>
+                </form>
+
+                <div class="actions">
+                    <div id="password-actions"></div>
+                    <div id="tag-actions"></div>
+                </div>
+
+                <div id="tag-editor" class="tag-editor hidden">
+                    <div class="panel-header">
+                        <div>
+                            <h3>Правка тегов для задачи <span id="tag-task-id"></span></h3>
+                            <p>Обязательные поля: Title, Artist, Album. Можно быстро подставить общие значения на весь релиз.</p>
+                        </div>
+                    </div>
+                    <div class="batch-controls">
+                        <label>Batch Artist <input id="batch-artist"></label>
+                        <label>Batch Album <input id="batch-album"></label>
+                        <label>Batch Year <input id="batch-year"></label>
+                        <button id="apply-batch" class="btn btn-secondary" type="button">Применить общие значения</button>
+                    </div>
+                    <div class="tag-table-wrap">
+                        <table id="tag-table">
+                            <thead>
+                                <tr><th>Путь</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="button-row" style="margin-top: 14px;">
+                        <button id="submit-tags" class="btn btn-primary" type="button">Сохранить теги</button>
+                        <button id="cancel-tags" class="btn btn-secondary" type="button">Закрыть редактор</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Очередь и задачи</h2>
+                        <p>Слева вы запускаете пачку, здесь видите ее общий прогресс, состояние каждого файла и все серверные задачи.</p>
+                    </div>
+                    <button class="btn btn-secondary" id="refresh-tasks" type="button">Обновить сейчас</button>
+                </div>
+
+                <div class="upload-session" id="upload-session">
+                    <div class="headline-row">
+                        <div>
+                            <h3 id="session-title">Активной отправки нет</h3>
+                            <div class="mini-note" id="session-note">Выберите папку и начните новую задачу.</div>
+                        </div>
+                        <span class="pill pill-queued" id="session-status-pill">idle</span>
+                    </div>
+
+                    <div class="upload-summary">
+                        <div class="summary-chip">
+                            <strong id="summary-complete">0 / 0</strong>
+                            <span>файлов завершено</span>
+                        </div>
+                        <div class="summary-chip">
+                            <strong id="summary-failed">0</strong>
+                            <span>ошибок</span>
+                        </div>
+                        <div class="summary-chip">
+                            <strong id="summary-active">0</strong>
+                            <span>активных потоков</span>
+                        </div>
+                        <div class="summary-chip">
+                            <strong id="summary-bytes">0 B / 0 B</strong>
+                            <span>передано данных</span>
+                        </div>
+                    </div>
+
+                    <div class="progress-shell">
+                        <div class="progress-bar" id="overall-progress"></div>
+                    </div>
+
+                    <div class="queue-list" id="uploads">
+                        <div class="empty-state">После старта здесь появится живая очередь файлов с прогрессом, ретраями и ошибками.</div>
+                    </div>
+                </div>
+
+                <div class="panel-header" style="margin-top: 24px;">
+                    <div>
+                        <h2>Серверные задачи</h2>
+                        <p>Статусы, причины пропусков и проблемные задачи обновляются автоматически.</p>
+                    </div>
+                </div>
+                <div class="task-grid" id="task-grid"></div>
+            </section>
         </div>
-    </section>
+    </div>
 
     <script>
+        const initialTasks = {{ tasks|tojson }};
+
+        const state = {
+            tasks: initialTasks,
+            uploadSession: null,
+            refreshTimer: null,
+        };
+
+        const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
         const uploadsContainer = document.getElementById('uploads');
-        let tasksData = {{ tasks|tojson }};
+        const taskGrid = document.getElementById('task-grid');
         const passwordActions = document.getElementById('password-actions');
         const tagActions = document.getElementById('tag-actions');
         const tagEditor = document.getElementById('tag-editor');
@@ -87,164 +803,631 @@
         const batchArtist = document.getElementById('batch-artist');
         const batchAlbum = document.getElementById('batch-album');
         const batchYear = document.getElementById('batch-year');
+        const fileInput = document.getElementById('file-input');
+        const startUploadButton = document.getElementById('start-upload');
+        const stopUploadButton = document.getElementById('stop-upload');
+        const retryFailedButton = document.getElementById('retry-failed');
+        const refreshTasksButton = document.getElementById('refresh-tasks');
 
-        function createProgressEntry(file) {
-            const wrapper = document.createElement('div');
-            wrapper.innerHTML = `<strong>${file.name}</strong> <span class="progress">0%</span>`;
-            return wrapper;
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
-        async function uploadFile(taskId, file, progressEl) {
-            const relativePath = file.webkitRelativePath || file.name;
-            const registerResponse = await fetch(`/api/tasks/${taskId}/files`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    relative_path: relativePath,
-                    size_bytes: file.size,
-                    original_name: file.name
-                })
-            });
-
-            if (!registerResponse.ok) {
-                throw new Error(`Register failed: ${await registerResponse.text()}`);
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) {
+                return '0 B';
             }
-            const { file_id: fileId, max_chunk_bytes: maxChunk } = await registerResponse.json();
-            let offset = 0;
-            while (offset < file.size) {
-                const chunk = file.slice(offset, offset + maxChunk);
-                const chunkResponse = await fetch(`/api/tasks/${taskId}/files/${fileId}/chunks`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Range': `bytes ${offset}-${offset + chunk.size - 1}/${file.size}`
-                    },
-                    body: chunk
-                });
-
-                if (!chunkResponse.ok) {
-                    throw new Error(`Chunk failed: ${await chunkResponse.text()}`);
-                }
-                const chunkResult = await chunkResponse.json();
-                offset = chunkResult.next_offset;
-                const percent = Math.floor((offset / file.size) * 100);
-                progressEl.querySelector('.progress').textContent = `${percent}%`;
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let value = bytes;
+            let unitIndex = 0;
+            while (value >= 1024 && unitIndex < units.length - 1) {
+                value /= 1024;
+                unitIndex += 1;
             }
-
-            const finalizeResponse = await fetch(`/api/tasks/${taskId}/files/${fileId}/finalize`, {
-                method: 'POST'
-            });
-            if (!finalizeResponse.ok) {
-                throw new Error(`Finalize failed: ${await finalizeResponse.text()}`);
-            }
-            progressEl.querySelector('.progress').textContent = 'Done';
+            const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
+            return `${value.toFixed(precision)} ${units[unitIndex]}`;
         }
 
-        document.getElementById('create-task').addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const nameInput = document.getElementById('name');
-            const filesInput = document.getElementById('file-input');
-            if (!filesInput.files.length) {
-                alert('Select at least one file.');
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function getPillClass(status) {
+            return `pill pill-${String(status || '').toLowerCase()}`;
+        }
+
+        function summarizeTaskStatuses(tasks) {
+            const counts = new Map();
+            tasks.forEach(task => {
+                counts.set(task.status, (counts.get(task.status) || 0) + 1);
+            });
+            return counts;
+        }
+
+        function updateSelectionSummary() {
+            const files = Array.from(fileInput.files || []);
+            const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+            document.getElementById('selection-files').textContent = String(files.length);
+            document.getElementById('selection-total-size').textContent = formatBytes(totalSize);
+        }
+
+        function setRefreshIndicator(mode) {
+            const indicator = document.getElementById('refresh-indicator');
+            indicator.textContent = mode;
+            indicator.style.color = mode === 'online' ? 'var(--success)' : 'var(--danger)';
+        }
+
+        function renderHeroStats() {
+            const tasks = state.tasks;
+            const attentionCount = tasks.filter(task => ['NEED_PASSWORD', 'NEED_TAGS', 'ERROR'].includes(task.status)).length;
+            const session = state.uploadSession;
+            const uploadedFiles = session ? session.items.filter(item => item.state === 'done').length : 0;
+            const failedFiles = session ? session.items.filter(item => item.state === 'error').length : 0;
+            const statusCounts = summarizeTaskStatuses(tasks);
+            const rows = Array.from(statusCounts.entries())
+                .sort((left, right) => right[1] - left[1])
+                .slice(0, 4);
+
+            document.getElementById('hero-total-tasks').textContent = String(tasks.length);
+            document.getElementById('hero-attention-count').textContent = String(attentionCount);
+            document.getElementById('hero-uploaded-files').textContent = String(uploadedFiles);
+            document.getElementById('hero-failed-files').textContent = String(failedFiles);
+
+            const heroStatusList = document.getElementById('hero-status-list');
+            if (!rows.length) {
+                heroStatusList.innerHTML = '<div class="status-row"><span>Задач пока нет</span><strong>0</strong></div>';
+                return;
+            }
+            heroStatusList.innerHTML = rows.map(([status, count]) => `
+                <div class="status-row">
+                    <span>${escapeHtml(status)}</span>
+                    <strong>${count}</strong>
+                </div>
+            `).join('');
+        }
+
+        function renderTaskCards(tasks) {
+            if (!tasks.length) {
+                taskGrid.innerHTML = '<div class="empty-state">Пока нет задач. Первая появится после создания новой отправки.</div>';
                 return;
             }
 
-            const payload = { name: nameInput.value };
-            const response = await fetch('/api/tasks', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            if (!response.ok) {
-                alert('Failed to create task');
-                return;
-            }
-            const task = await response.json();
-            const files = Array.from(filesInput.files);
-            uploadsContainer.innerHTML = '';
-            for (const file of files) {
-                const progressEl = createProgressEntry(file);
-                uploadsContainer.appendChild(progressEl);
-                try {
-                    await uploadFile(task.id, file, progressEl);
-                } catch (err) {
-                    progressEl.querySelector('.progress').textContent = `Error: ${err.message}`;
-                    break;
-                }
-            }
-            window.location.reload();
-        });
+            taskGrid.innerHTML = tasks.map(task => `
+                <article class="task-card">
+                    <div class="task-top">
+                        <div>
+                            <h3>${escapeHtml(task.name)}</h3>
+                            <div class="task-meta"><strong>#${task.id}</strong> · создана ${escapeHtml(task.created_at)}</div>
+                        </div>
+                        <span class="${getPillClass(task.status)}">${escapeHtml(task.status)}</span>
+                    </div>
+                    <div class="task-meta">Обновлена: ${escapeHtml(task.updated_at)}</div>
+                    <div class="task-reasons">
+                        ${task.status_reasons && task.status_reasons.length
+                            ? `<ul>${task.status_reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`
+                            : 'Без дополнительных замечаний'}
+                    </div>
+                </article>
+            `).join('');
+        }
 
         function renderPasswordActions(tasks) {
-            passwordActions.innerHTML = '';
             const waiting = tasks.filter(task => task.status === 'NEED_PASSWORD');
-            waiting.forEach(task => {
-                const form = document.createElement('form');
-                form.innerHTML = `
-                    <h3>Задача ${task.id}: требуется пароль</h3>
-                    <input type="password" name="password" placeholder="Введите пароль" required>
-                    <button type="submit">Продолжить</button>
-                `;
-                form.addEventListener('submit', async (evt) => {
-                    evt.preventDefault();
+            if (!waiting.length) {
+                passwordActions.innerHTML = '';
+                return;
+            }
+
+            passwordActions.innerHTML = `
+                <div class="action-grid">
+                    ${waiting.map(task => `
+                        <form class="action-card" data-password-task="${task.id}">
+                            <div>
+                                <h3>Задача #${task.id}: нужен пароль</h3>
+                                <p>${escapeHtml(task.status_detail || 'Архив защищен паролем, без него обработка не продолжится.')}</p>
+                            </div>
+                            <input type="password" name="password" placeholder="Введите пароль" required>
+                            <button class="btn btn-primary" type="submit">Продолжить обработку</button>
+                        </form>
+                    `).join('')}
+                </div>
+            `;
+
+            passwordActions.querySelectorAll('form[data-password-task]').forEach(form => {
+                form.addEventListener('submit', async event => {
+                    event.preventDefault();
+                    const taskId = form.dataset.passwordTask;
                     const password = form.querySelector('input[name="password"]').value;
-                    const response = await fetch(`/api/tasks/${task.id}/password`, {
+                    const response = await fetch(`/api/tasks/${taskId}/password`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ password })
                     });
                     if (!response.ok) {
-                        alert('Не удалось отправить пароль');
+                        alert('Не удалось отправить пароль.');
                         return;
                     }
-                    alert('Пароль принят, обработка возобновлена');
-                    window.location.reload();
+                    form.reset();
+                    await refreshTasks();
                 });
-                passwordActions.appendChild(form);
             });
         }
 
         function renderTagActions(tasks) {
-            tagActions.innerHTML = '';
             const waiting = tasks.filter(task => task.status === 'NEED_TAGS');
-            waiting.forEach(task => {
-                const wrapper = document.createElement('div');
-                wrapper.innerHTML = `
-                    <h3>Задача ${task.id}: требуется правка тегов</h3>
-                    <button type="button">Открыть редактор тегов</button>
-                `;
-                const openButton = wrapper.querySelector('button');
-                openButton.addEventListener('click', () => loadTags(task.id));
-                tagActions.appendChild(wrapper);
+            if (!waiting.length) {
+                tagActions.innerHTML = '';
+                return;
+            }
+
+            tagActions.innerHTML = `
+                <div class="action-grid">
+                    ${waiting.map(task => `
+                        <div class="action-card">
+                            <div>
+                                <h3>Задача #${task.id}: нужна правка тегов</h3>
+                                <p>${escapeHtml(task.status_detail || 'Найдены треки без обязательных тегов.')}</p>
+                            </div>
+                            <button class="btn btn-secondary" type="button" data-open-tags="${task.id}">Открыть редактор</button>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            tagActions.querySelectorAll('[data-open-tags]').forEach(button => {
+                button.addEventListener('click', () => loadTags(button.dataset.openTags));
             });
         }
 
-        function populateTagEditor(taskId, tracks) {
-            tagTaskId.textContent = taskId;
-            tagTableBody.innerHTML = '';
-            tracks.forEach(track => {
-                const row = document.createElement('tr');
-                row.dataset.path = track.path;
-                row.innerHTML = `
-                    <td>${track.path}</td>
-                    <td><input type="text" value="${track.title || ''}"></td>
-                    <td><input type="text" value="${track.artist || ''}"></td>
-                    <td><input type="text" value="${track.album || ''}"></td>
-                    <td><input type="text" value="${track.year || ''}"></td>
+        function renderUploadSession() {
+            const session = state.uploadSession;
+            const sessionTitle = document.getElementById('session-title');
+            const sessionNote = document.getElementById('session-note');
+            const sessionStatusPill = document.getElementById('session-status-pill');
+            const summaryComplete = document.getElementById('summary-complete');
+            const summaryFailed = document.getElementById('summary-failed');
+            const summaryActive = document.getElementById('summary-active');
+            const summaryBytes = document.getElementById('summary-bytes');
+            const overallProgress = document.getElementById('overall-progress');
+
+            if (!session) {
+                sessionTitle.textContent = 'Активной отправки нет';
+                sessionNote.textContent = 'Выберите папку и начните новую задачу.';
+                sessionStatusPill.className = 'pill pill-queued';
+                sessionStatusPill.textContent = 'idle';
+                summaryComplete.textContent = '0 / 0';
+                summaryFailed.textContent = '0';
+                summaryActive.textContent = '0';
+                summaryBytes.textContent = '0 B / 0 B';
+                overallProgress.style.width = '0%';
+                uploadsContainer.innerHTML = '<div class="empty-state">После старта здесь появится живая очередь файлов с прогрессом, ретраями и ошибками.</div>';
+                stopUploadButton.disabled = true;
+                retryFailedButton.disabled = true;
+                return;
+            }
+
+            const doneCount = session.items.filter(item => item.state === 'done').length;
+            const failedCount = session.items.filter(item => item.state === 'error').length;
+            const activeCount = session.items.filter(item => ['registering', 'uploading', 'finalizing'].includes(item.state)).length;
+            const uploadedBytes = session.items.reduce((sum, item) => sum + item.offset, 0);
+            const overallPercent = session.totalBytes ? Math.min(100, (uploadedBytes / session.totalBytes) * 100) : 0;
+            const waitingToRetry = session.items.some(item => ['error', 'stopped', 'queued'].includes(item.state));
+
+            sessionTitle.textContent = `Задача #${session.taskId}: ${session.taskName}`;
+            sessionNote.textContent = session.message;
+            sessionStatusPill.className = getPillClass(session.state);
+            sessionStatusPill.textContent = session.state;
+            summaryComplete.textContent = `${doneCount} / ${session.items.length}`;
+            summaryFailed.textContent = String(failedCount);
+            summaryActive.textContent = String(activeCount);
+            summaryBytes.textContent = `${formatBytes(uploadedBytes)} / ${formatBytes(session.totalBytes)}`;
+            overallProgress.style.width = `${overallPercent.toFixed(2)}%`;
+
+            stopUploadButton.disabled = !['starting', 'running'].includes(session.state);
+            retryFailedButton.disabled = !waitingToRetry || ['starting', 'running'].includes(session.state);
+
+            uploadsContainer.innerHTML = session.items.map(item => {
+                const percent = item.file.size ? Math.min(100, Math.floor((item.offset / item.file.size) * 100)) : 100;
+                return `
+                    <article class="queue-item">
+                        <div class="queue-top">
+                            <div class="queue-title">
+                                <strong>${escapeHtml(item.file.name)}</strong>
+                                <span>${escapeHtml(item.relativePath)}</span>
+                            </div>
+                            <span class="${getPillClass(item.state)}">${escapeHtml(item.statusLabel)}</span>
+                        </div>
+                        <div class="progress-shell">
+                            <div class="progress-bar" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="queue-meta">
+                            <span>${formatBytes(item.offset)} / ${formatBytes(item.file.size)}</span>
+                            <span>${percent}%${item.attempts ? ` · retry ${item.attempts}` : ''}</span>
+                        </div>
+                        <div class="queue-error ${item.error ? 'visible' : ''}">${escapeHtml(item.error || '')}</div>
+                    </article>
                 `;
-                tagTableBody.appendChild(row);
+            }).join('');
+        }
+
+        async function refreshTasks() {
+            try {
+                const response = await fetch('/api/tasks');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                state.tasks = await response.json();
+                render();
+                setRefreshIndicator('online');
+            } catch (error) {
+                console.error(error);
+                setRefreshIndicator('offline');
+            }
+        }
+
+        async function fetchTextSafe(response) {
+            try {
+                return await response.text();
+            } catch (error) {
+                return `${response.status}`;
+            }
+        }
+
+        async function requestWithRetry(requestFactory, options = {}) {
+            const attempts = options.attempts || 4;
+            const baseDelay = options.baseDelay || 500;
+            let lastError = new Error('Request failed');
+
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+                try {
+                    const response = await requestFactory();
+                    if (response.ok) {
+                        return response;
+                    }
+
+                    if (!RETRYABLE_STATUSES.has(response.status) || attempt === attempts) {
+                        const detail = await fetchTextSafe(response);
+                        throw new Error(detail || `HTTP ${response.status}`);
+                    }
+
+                    lastError = new Error(`HTTP ${response.status}`);
+                } catch (error) {
+                    lastError = error instanceof Error ? error : new Error(String(error));
+                    if (attempt === attempts) {
+                        break;
+                    }
+                }
+
+                await sleep(baseDelay * attempt);
+            }
+
+            throw lastError;
+        }
+
+        async function registerFile(taskId, item) {
+            if (item.fileId) {
+                return { fileId: item.fileId, maxChunk: item.maxChunk };
+            }
+
+            item.state = 'registering';
+            item.statusLabel = 'registering';
+            item.attempts = 0;
+            renderUploadSession();
+
+            const response = await requestWithRetry(() => {
+                item.attempts += 1;
+                renderUploadSession();
+                return fetch(`/api/tasks/${taskId}/files`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        relative_path: item.relativePath,
+                        size_bytes: item.file.size,
+                        original_name: item.file.name
+                    })
+                });
             });
-            tagEditor.classList.remove('hidden');
+
+            const payload = await response.json();
+            item.fileId = payload.file_id;
+            item.maxChunk = payload.max_chunk_bytes;
+            item.attempts = 0;
+            return { fileId: item.fileId, maxChunk: item.maxChunk };
+        }
+
+        function parseResumeOffset(detail) {
+            const match = String(detail || '').match(/Resume from (\d+)/i);
+            return match ? Number(match[1]) : null;
+        }
+
+        async function uploadChunk(taskId, item, chunkStart, chunkEnd) {
+            const chunk = item.file.slice(chunkStart, chunkEnd);
+            let lastError = new Error('Chunk upload failed');
+
+            for (let attempt = 1; attempt <= 5; attempt += 1) {
+                try {
+                    item.attempts = attempt - 1;
+                    item.state = 'uploading';
+                    item.statusLabel = 'uploading';
+                    renderUploadSession();
+
+                    const response = await fetch(`/api/tasks/${taskId}/files/${item.fileId}/chunks`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Range': `bytes ${chunkStart}-${chunkStart + chunk.size - 1}/${item.file.size}`
+                        },
+                        body: chunk
+                    });
+
+                    if (response.ok) {
+                        item.attempts = 0;
+                        return await response.json();
+                    }
+
+                    const detail = await fetchTextSafe(response);
+                    if (response.status === 409) {
+                        const resumeOffset = parseResumeOffset(detail);
+                        if (resumeOffset !== null) {
+                            item.attempts = 0;
+                            return {
+                                next_offset: resumeOffset,
+                                complete: resumeOffset >= item.file.size,
+                            };
+                        }
+                    }
+
+                    if (!RETRYABLE_STATUSES.has(response.status) || attempt === 5) {
+                        throw new Error(detail || `HTTP ${response.status}`);
+                    }
+
+                    lastError = new Error(detail || `HTTP ${response.status}`);
+                } catch (error) {
+                    lastError = error instanceof Error ? error : new Error(String(error));
+                    if (attempt === 5) {
+                        break;
+                    }
+                }
+
+                await sleep(450 * attempt);
+            }
+
+            throw lastError;
+        }
+
+        async function finalizeFile(taskId, item) {
+            item.state = 'finalizing';
+            item.statusLabel = 'finalizing';
+            item.attempts = 0;
+            renderUploadSession();
+
+            await requestWithRetry(() => {
+                item.attempts += 1;
+                renderUploadSession();
+                return fetch(`/api/tasks/${taskId}/files/${item.fileId}/finalize`, {
+                    method: 'POST'
+                });
+            });
+
+            item.attempts = 0;
+        }
+
+        async function uploadSingleItem(taskId, item) {
+            item.error = null;
+
+            if (state.uploadSession.stopRequested) {
+                item.state = 'stopped';
+                item.statusLabel = 'stopped';
+                renderUploadSession();
+                return;
+            }
+
+            await registerFile(taskId, item);
+
+            while (item.offset < item.file.size) {
+                if (state.uploadSession.stopRequested) {
+                    item.state = 'stopped';
+                    item.statusLabel = 'stopped';
+                    renderUploadSession();
+                    return;
+                }
+
+                const chunkEnd = Math.min(item.offset + item.maxChunk, item.file.size);
+                const result = await uploadChunk(taskId, item, item.offset, chunkEnd);
+                item.offset = result.next_offset;
+                renderUploadSession();
+            }
+
+            await finalizeFile(taskId, item);
+            item.state = 'done';
+            item.statusLabel = 'done';
+            item.error = null;
+            renderUploadSession();
+        }
+
+        async function runUploadPool(items) {
+            const session = state.uploadSession;
+            if (!session || !items.length) {
+                return;
+            }
+
+            let cursor = 0;
+            session.state = 'running';
+            session.message = `Загрузка идет в ${session.parallelCount} потока(ов). Ошибки отдельных файлов не останавливают всю пачку.`;
+            renderUploadSession();
+
+            async function workerLoop() {
+                while (cursor < items.length && !session.stopRequested) {
+                    const item = items[cursor];
+                    cursor += 1;
+
+                    try {
+                        await uploadSingleItem(session.taskId, item);
+                    } catch (error) {
+                        item.state = 'error';
+                        item.statusLabel = 'error';
+                        item.error = error instanceof Error ? error.message : String(error);
+                        renderUploadSession();
+                    }
+                }
+            }
+
+            const workerCount = Math.min(session.parallelCount, items.length);
+            await Promise.all(Array.from({ length: workerCount }, () => workerLoop()));
+
+            const failedCount = session.items.filter(item => item.state === 'error').length;
+            const pendingCount = session.items.filter(item => ['queued', 'stopped'].includes(item.state)).length;
+            if (session.stopRequested) {
+                session.state = 'stopped';
+                session.message = 'Отправка остановлена. Можно повторить оставшиеся или неудачные файлы.';
+            } else if (failedCount) {
+                session.state = 'warning';
+                session.message = `Часть пачки завершилась с ошибками: ${failedCount}. Исправьте проблему и нажмите "Повторить оставшиеся и неудачные".`;
+            } else if (pendingCount) {
+                session.state = 'warning';
+                session.message = 'Есть файлы, которые не были доведены до конца. Их можно повторить отдельно.';
+            } else {
+                session.state = 'success';
+                session.message = 'Все файлы из текущей пачки успешно отправлены.';
+            }
+
+            renderUploadSession();
+            await refreshTasks();
+        }
+
+        async function startNewUpload(event) {
+            event.preventDefault();
+            if (state.uploadSession && ['starting', 'running'].includes(state.uploadSession.state)) {
+                alert('Сначала дождитесь завершения текущей отправки или остановите ее.');
+                return;
+            }
+
+            const nameInput = document.getElementById('name');
+            const files = Array.from(fileInput.files || []);
+            const parallelCount = Number(document.getElementById('parallel-count').value || '3');
+
+            if (!files.length) {
+                alert('Выберите хотя бы один файл.');
+                return;
+            }
+
+            startUploadButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: nameInput.value })
+                });
+
+                if (!response.ok) {
+                    throw new Error(await fetchTextSafe(response));
+                }
+
+                const task = await response.json();
+                state.uploadSession = {
+                    taskId: task.id,
+                    taskName: task.name,
+                    state: 'starting',
+                    message: 'Подготавливаю очередь файлов и создаю стабильную сессию загрузки.',
+                    stopRequested: false,
+                    parallelCount,
+                    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+                    items: files
+                        .sort((left, right) => left.size - right.size)
+                        .map((file, index) => ({
+                            id: `${task.id}-${index}`,
+                            file,
+                            relativePath: file.webkitRelativePath || file.name,
+                            offset: 0,
+                            fileId: null,
+                            maxChunk: null,
+                            state: 'queued',
+                            statusLabel: 'queued',
+                            error: null,
+                            attempts: 0,
+                        })),
+                };
+
+                renderUploadSession();
+                await refreshTasks();
+                await runUploadPool(state.uploadSession.items);
+            } catch (error) {
+                alert(`Не удалось начать отправку: ${error instanceof Error ? error.message : String(error)}`);
+            } finally {
+                startUploadButton.disabled = false;
+            }
+        }
+
+        async function retryFailedItems() {
+            const session = state.uploadSession;
+            if (!session) {
+                return;
+            }
+
+            const retryable = session.items.filter(item => ['error', 'stopped', 'queued'].includes(item.state));
+            if (!retryable.length) {
+                return;
+            }
+
+            session.stopRequested = false;
+            retryable.forEach(item => {
+                item.error = null;
+                item.statusLabel = item.offset > 0 ? 'uploading' : 'queued';
+                item.state = item.offset > 0 ? 'uploading' : 'queued';
+            });
+            session.state = 'starting';
+            session.message = 'Повторная отправка неудачных файлов.';
+            renderUploadSession();
+            await runUploadPool(retryable);
         }
 
         async function loadTags(taskId) {
             const response = await fetch(`/api/tasks/${taskId}/tags`);
             if (!response.ok) {
-                alert('Не удалось загрузить теги');
+                alert('Не удалось загрузить теги.');
                 return;
             }
             const payload = await response.json();
-            populateTagEditor(taskId, payload.tracks);
+            tagTaskId.textContent = taskId;
+            tagTableBody.innerHTML = payload.tracks.map(track => `
+                <tr data-path="${escapeHtml(track.path)}">
+                    <td>${escapeHtml(track.path)}</td>
+                    <td><input type="text" data-field="title" value="${escapeHtml(track.title || '')}"></td>
+                    <td><input type="text" data-field="artist" value="${escapeHtml(track.artist || '')}"></td>
+                    <td><input type="text" data-field="album" value="${escapeHtml(track.album || '')}"></td>
+                    <td><input type="text" data-field="year" value="${escapeHtml(track.year || '')}"></td>
+                </tr>
+            `).join('');
+            tagEditor.classList.remove('hidden');
         }
+
+        function render() {
+            renderHeroStats();
+            renderTaskCards(state.tasks);
+            renderPasswordActions(state.tasks);
+            renderTagActions(state.tasks);
+            renderUploadSession();
+        }
+
+        document.getElementById('create-task').addEventListener('submit', startNewUpload);
+
+        stopUploadButton.addEventListener('click', () => {
+            if (!state.uploadSession) {
+                return;
+            }
+            state.uploadSession.stopRequested = true;
+            state.uploadSession.message = 'Остановка запрошена. Текущие запросы завершатся, новые не стартуют.';
+            renderUploadSession();
+        });
+
+        retryFailedButton.addEventListener('click', retryFailedItems);
+        refreshTasksButton.addEventListener('click', refreshTasks);
+        fileInput.addEventListener('change', updateSelectionSummary);
 
         document.getElementById('cancel-tags').addEventListener('click', () => {
             tagEditor.classList.add('hidden');
@@ -254,131 +1437,54 @@
         document.getElementById('apply-batch').addEventListener('click', () => {
             const rows = Array.from(tagTableBody.querySelectorAll('tr'));
             rows.forEach(row => {
-                const cells = row.querySelectorAll('input');
-                if (batchArtist.value) { cells[1].value = batchArtist.value; }
-                if (batchAlbum.value) { cells[2].value = batchAlbum.value; }
-                if (batchYear.value) { cells[3].value = batchYear.value; }
+                const artistInput = row.querySelector('input[data-field="artist"]');
+                const albumInput = row.querySelector('input[data-field="album"]');
+                const yearInput = row.querySelector('input[data-field="year"]');
+                if (batchArtist.value && artistInput) { artistInput.value = batchArtist.value; }
+                if (batchAlbum.value && albumInput) { albumInput.value = batchAlbum.value; }
+                if (batchYear.value && yearInput) { yearInput.value = batchYear.value; }
             });
         });
 
         document.getElementById('submit-tags').addEventListener('click', async () => {
             const rows = Array.from(tagTableBody.querySelectorAll('tr'));
             const taskId = tagTaskId.textContent;
-            const tracks = rows.map(row => {
-                const inputs = row.querySelectorAll('input');
-                return {
-                    path: row.dataset.path,
-                    title: inputs[0].value || null,
-                    artist: inputs[1].value || null,
-                    album: inputs[2].value || null,
-                    year: inputs[3].value || null,
-                };
-            });
-            const payload = {
-                tracks,
-                batch_artist: batchArtist.value || null,
-                batch_album: batchAlbum.value || null,
-                batch_year: batchYear.value || null,
-            };
+            const tracks = rows.map(row => ({
+                path: row.dataset.path,
+                title: row.querySelector('input[data-field="title"]').value || null,
+                artist: row.querySelector('input[data-field="artist"]').value || null,
+                album: row.querySelector('input[data-field="album"]').value || null,
+                year: row.querySelector('input[data-field="year"]').value || null,
+            }));
+
             const response = await fetch(`/api/tasks/${taskId}/tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    tracks,
+                    batch_artist: batchArtist.value || null,
+                    batch_album: batchAlbum.value || null,
+                    batch_year: batchYear.value || null,
+                })
             });
+
             if (!response.ok) {
-                alert('Не удалось сохранить теги');
+                alert('Не удалось сохранить теги.');
                 return;
             }
-            alert('Теги обновлены, обработка продолжается');
-            window.location.reload();
+
+            batchArtist.value = '';
+            batchAlbum.value = '';
+            batchYear.value = '';
+            tagEditor.classList.add('hidden');
+            tagTableBody.innerHTML = '';
+            await refreshTasks();
         });
 
-        function statusBadge(status) {
-            const span = document.createElement('span');
-            span.textContent = status;
-            span.classList.add('badge');
-            if (['ERROR', 'FAILED'].includes(status)) {
-                span.classList.add('status-error');
-            } else if (['NEED_PASSWORD', 'NEED_TAGS', 'CANCELLED'].includes(status)) {
-                span.classList.add('status-warning');
-            } else if (['DONE', 'DONE_WITH_DUPLICATES', 'COMPLETED'].includes(status)) {
-                span.classList.add('status-ok');
-            }
-            return span;
-        }
-
-        function renderOverview(rows) {
-            const body = document.getElementById('overview-body');
-            body.innerHTML = '';
-            rows.forEach(entry => {
-                const tr = document.createElement('tr');
-                if (entry.is_stuck) {
-                    tr.classList.add('stuck');
-                }
-                const lastEvent = entry.recent_events.at(-1);
-                tr.innerHTML = `
-                    <td>${entry.task.id}</td>
-                    <td>${entry.task.name}</td>
-                    <td></td>
-                    <td>${lastEvent ? lastEvent.event : '—'}</td>
-                    <td>${entry.task.last_event_at || '—'}</td>
-                    <td class="event-log"></td>
-                    <td><a href="/api/tasks/${entry.task.id}/debug" target="_blank">/debug</a></td>
-                `;
-                tr.querySelector('td:nth-child(3)').appendChild(statusBadge(entry.task.status));
-                const eventsCell = tr.querySelector('.event-log');
-                eventsCell.innerHTML = entry.recent_events
-                    .map(evt => {
-                        const lower = evt.event.toLowerCase();
-                        const cls = (lower.includes('fail') || lower.includes('error')) ? 'status-error badge' : '';
-                        return `<div class="${cls}">${evt.event} <small>${evt.created_at}</small></div>`;
-                    })
-                    .join('');
-                body.appendChild(tr);
-            });
-        }
-
-        async function loadOverview() {
-            try {
-                const response = await fetch('/api/tasks/overview');
-                if (!response.ok) {
-                    throw new Error('Не удалось загрузить статус задач');
-                }
-                const payload = await response.json();
-                renderOverview(payload);
-                tasksData = payload.map(item => item.task);
-                renderPasswordActions(tasksData);
-                renderTagActions(tasksData);
-            } catch (err) {
-                console.error(err);
-            }
-        }
-
-        async function loadHealth() {
-            const container = document.getElementById('health');
-            try {
-                const response = await fetch('/health');
-                if (!response.ok) {
-                    throw new Error('healthcheck failed');
-                }
-                const payload = await response.json();
-                container.innerHTML = `
-                    <strong>API health:</strong> ${payload.status}<br>
-                    <strong>Worker:</strong> ${payload.worker_status}${payload.worker_heartbeat_at ? ` (last beat ${payload.worker_heartbeat_at})` : ' (no heartbeat yet)'}
-                `;
-                if (payload.worker_status !== 'ok') {
-                    container.classList.add('status-warning');
-                }
-            } catch (err) {
-                container.innerHTML = `Ошибка получения статуса: ${err.message}`;
-                container.classList.add('status-error');
-            }
-        }
-
-        renderPasswordActions(tasksData);
-        renderTagActions(tasksData);
-        loadOverview();
-        loadHealth();
+        state.refreshTimer = setInterval(refreshTasks, 5000);
+        updateSelectionSummary();
+        render();
+        refreshTasks();
     </script>
 </body>
 </html>

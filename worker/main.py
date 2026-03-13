@@ -12,6 +12,7 @@ from typing import BinaryIO, Dict, List, Optional, Sequence, Set, Tuple
 
 import py7zr
 import rarfile
+from mutagen import File as MutagenFile
 
 from app.config import AppConfig, load_config
 from app.models import TaskFileRecord, TaskRecord, TaskStatus
@@ -152,6 +153,64 @@ def _sha256sum(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_track_tags(path: Path) -> Optional[Dict[str, Optional[str]]]:
+    try:
+        audio = MutagenFile(path, easy=True)
+    except Exception:  # noqa: BLE001
+        return None
+    if audio is None:
+        return None
+    tags = audio.tags or {}
+
+    def _first_value(key: str) -> Optional[str]:
+        values = tags.get(key)
+        if not values:
+            return None
+        value = str(values[0]).strip()
+        return value or None
+
+    return {
+        "artist": _first_value("artist"),
+        "album": _first_value("album"),
+        "title": _first_value("title"),
+        "year": _first_value("date") or _first_value("year"),
+    }
+
+
+def _tags_incomplete(path: Path) -> bool:
+    tags = _read_track_tags(path)
+    if tags is None:
+        return False
+    return not tags["artist"] or not tags["album"] or not tags["title"]
+
+
+def _source_relative_to_task_temp(config: AppConfig, task_id: int, source_path: Path) -> Path:
+    temp_dir = _task_temp_dir(config, task_id)
+    return source_path.resolve().relative_to(temp_dir.resolve())
+
+
+def _pending_tag_entries(config: AppConfig, task: TaskRecord, outcomes: Sequence[FileOutcome]) -> List[Dict[str, str]]:
+    pending: List[Dict[str, str]] = []
+    seen_outputs: Set[str] = set()
+    for outcome in outcomes:
+        if outcome.status != "READY":
+            continue
+        if not _tags_incomplete(outcome.source_path):
+            continue
+        relative_output = outcome.relative_output.as_posix()
+        if relative_output in seen_outputs:
+            continue
+        source_relative = _source_relative_to_task_temp(config, task.id, outcome.source_path)
+        pending.append(
+            {
+                "source": source_relative.as_posix(),
+                "relative_output": outcome.relative_output.as_posix(),
+            }
+        )
+        seen_outputs.add(relative_output)
+    return pending
 
 
 def _plan_destination(task: TaskRecord, incoming_root: Path) -> Path:
@@ -447,6 +506,13 @@ def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
     except PasswordRequiredError:
         return
 
+    pending_tags = _pending_tag_entries(config, task, outcomes)
+    if pending_tags:
+        db.update_task_context(task.id, {"pending_tags": pending_tags})
+        db.add_event(task.id, f"need_tags:{len(pending_tags)}")
+        db.update_status(task.id, TaskStatus.NEED_TAGS)
+        return
+
     duplicates_or_skips = False
     destination_root = _plan_destination(task, incoming_root)
     file_statuses: Dict[str, Dict[str, str]] = {}
@@ -492,6 +558,7 @@ def _process_task(db: Database, config: AppConfig, task: TaskRecord) -> None:
         file_statuses[relative_key] = {"status": outcome.status, "hash": file_hash}
         db.add_event(task.id, f"moved_to_incoming:{outcome.relative_output}")
 
+    db.clear_task_context_keys(task.id, {"pending_tags", "password", "password_for", "password_required", "error_message"})
     db.update_task_context(task.id, {"file_statuses": file_statuses})
 
     final_status = TaskStatus.DONE_WITH_DUPLICATES if duplicates_or_skips else TaskStatus.DONE

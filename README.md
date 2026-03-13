@@ -1,24 +1,38 @@
 # Roon Server Library Helper
 
-FastAPI + worker skeleton for managing media-processing tasks. The service uses SQLite storage, environment/config-based settings, and simple stubs for task processing.
+FastAPI + worker service for managing media-processing tasks on a Linux host. The service uses SQLite storage, environment/config-based settings, resumable uploads, and a background worker for extraction, duplicate detection, and tag review.
 
 ## Features
 - FastAPI service with task CRUD and resumable uploads (chunked, resumable via offsets).
 - SQLite schema (`tasks`, `task_files`, `known_hashes`, `task_events`) initialized automatically.
 - Task status state machine with guarded transitions.
-- HTML page for creating tasks, uploading files with progress, and viewing their status.
-- Worker stub process kept alive for system integration.
+- Browser UI with queue-based uploads, per-file progress, retry handling, and live task monitoring.
+- Worker process for extraction, duplicate detection, password prompts, and tag review.
 - Configurable through environment variables and optional YAML/JSON config file (environment wins).
 - Systemd unit samples for API and worker services.
+- Linux-focused smoke-flow documented in [`docs/linux-smoke.md`](docs/linux-smoke.md).
 - Pre-commit helper to ensure `docs/` files are valid UTF-8 without NUL bytes.
 
 ## Requirements
 - Python 3.11+
+- Linux host is the supported deployment target
 - Recommended: create a virtual environment before installing dependencies
+- For `rarfile`, install a compatible extractor available in `PATH` on the target host
 
 Install dependencies:
 ```bash
 pip install -r requirements.txt
+```
+
+Local setup with `uv`:
+```bash
+uv venv .venv
+uv pip install --python .venv/Scripts/python.exe -r requirements.txt
+```
+
+Run tests with the local venv:
+```bash
+.venv/Scripts/python.exe -m unittest tests.test_app_and_worker
 ```
 
 ## Configuration
@@ -34,10 +48,13 @@ Configuration is loaded from environment variables with optional overrides from 
 | `ALLOWLIST` | Comma-separated allowlist (extensions). | empty list |
 | `CLEANUP_DAYS` | Days until cleanup marker. | `30` |
 | `MOUNT_VALIDATION_MODE` | `strict` or `relaxed`. | `strict` |
+| `DB_PATH` | SQLite database path. | `storage/app.db` |
 | `CONFIG_FILE` | Optional path to YAML/JSON config. | `./config.yaml` if present |
 | `DB_PATH` | Path to SQLite database (`AppConfig.db_path`). | `storage/app.db` |
 
 Config file keys mirror the environment variables. Example `config.example.yaml` is included.
+
+Settings exposed via `/api/settings` cover the same runtime fields used by uploads and worker processing, including `max_task_size_bytes`, `max_chunk_bytes`, and `db_path`.
 
 ## Running the API locally
 1. Ensure `MUSIC_ROOT` points to an existing directory (no automatic creation).
@@ -46,13 +63,21 @@ Config file keys mirror the environment variables. Example `config.example.yaml`
    ```bash
    MUSIC_ROOT=/mnt/music uvicorn app.main:app --reload
    ```
+   Or with the local venv created by `uv`:
+   ```bash
+   .venv/Scripts/python.exe -m uvicorn app.main:app --reload
+   ```
 4. Open http://127.0.0.1:8000/ to use the HTML form. API endpoints live under `/api/...`.
-   - The HTML page supports selecting multiple files (or a directory) and uploads in chunks with progress.
+   - The HTML page supports selecting multiple files (or a directory), uploads them with bounded parallelism, retries unstable requests, and keeps per-file progress in view.
 
 ## Worker stub
-The worker keeps a process alive for system integration:
+The worker watches tasks in `READY_FOR_PROCESSING` or `PROCESSING` and performs extraction, duplicate detection, password prompting, and tag review:
 ```bash
 MUSIC_ROOT=/mnt/music python -m worker.main
+```
+With the local venv:
+```bash
+.venv/Scripts/python.exe -m worker.main
 ```
 
 ## Deployment layout
@@ -135,6 +160,15 @@ journalctl -u roon-uploader-api.service -u roon-uploader-worker.service -f
 
 Because data and config live under `/opt/roonhelper/shared/`, switching releases and restarting does not drop active tasks or database state.
 
+## Known-good Linux smoke flow
+Use the short Linux-only validation flow in [`docs/linux-smoke.md`](docs/linux-smoke.md). It covers:
+- package and Python prerequisites
+- minimal env/config setup
+- API + worker startup
+- happy-path upload
+- password and tag-review flows
+- cleanup timer expectations
+
 ## Database schema
 SQLite tables initialized on startup:
 - `tasks`: id, name, status, created_at, updated_at, cleanup_after, context
@@ -149,8 +183,14 @@ Run the UTF-8/NUL check before committing documentation changes:
 scripts/pre_commit_doc_check.sh
 ```
 
-## Definition of done (local)
-- `uvicorn app.main:app` starts successfully.
-- Task endpoints create/read tasks in SQLite.
-- Settings endpoint reflects configuration and updates in-memory config.
-- Music root validation fails fast if the path does not exist.
+## Tests
+Minimal integration-oriented checks live in `tests/test_app_and_worker.py` and can be run with:
+```bash
+python -m unittest tests.test_app_and_worker
+```
+
+## Operational limits (v1)
+- Supported target is a single Linux host with `systemd`.
+- SQLite is intended for one API process and one worker process on the same machine.
+- The service is meant for self-hosted use; multi-user auth and multi-node coordination are not implemented.
+- `music_root` must already exist and be writable by the service user.

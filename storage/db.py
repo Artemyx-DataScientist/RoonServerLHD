@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Iterator, List, Optional
 
 from app.models import (
     TaskEventRecord,
@@ -20,10 +21,14 @@ class Database:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+        finally:
+            connection.close()
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -297,11 +302,12 @@ class Database:
         if not task:
             return None
         merged = {**task.context, **updates}
+        now = datetime.now(timezone.utc)
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE tasks SET context = ? WHERE id = ?",
-                (json.dumps(merged), task_id),
+                "UPDATE tasks SET context = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(merged), now.isoformat(), task_id),
             )
             conn.commit()
         return self.get_task(task_id)
@@ -311,11 +317,12 @@ class Database:
         if not task:
             return None
         remaining = {key: value for key, value in task.context.items() if key not in keys}
+        now = datetime.now(timezone.utc)
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE tasks SET context = ? WHERE id = ?",
-                (json.dumps(remaining), task_id),
+                "UPDATE tasks SET context = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(remaining), now.isoformat(), task_id),
             )
             conn.commit()
         return self.get_task(task_id)
@@ -350,6 +357,12 @@ class Database:
         now = datetime.now(timezone.utc)
         with self._connect() as conn:
             cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id FROM task_files WHERE task_id = ? AND relative_path = ?",
+                (task_id, relative_path),
+            )
+            if cursor.fetchone():
+                raise ValueError(f"File already registered for path: {relative_path}")
             cursor.execute(
                 """
                 INSERT INTO task_files (
